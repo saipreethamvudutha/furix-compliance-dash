@@ -1,0 +1,12 @@
+title: Windows Defender Real-Time Protection Disabled
+id: furix-0024-windows-disable-defender
+status: stable
+description: Real-time antimalware monitoring was turned off.
+logsource:
+  product: windows
+detection:
+  sel:
+    _raw|contains: 'DisableRealtimeMonitoring'
+  condition: sel
+level: high
+tags: [attack.defense-evasion, attack.t1562.001]

@@ -1,0 +1,12 @@
+title: Linux Reverse Shell Indicator
+id: furix-0060-linux-reverse-shell
+status: stable
+description: A bash reverse shell (/dev/tcp) — interactive C2 over the network.
+logsource:
+  category: process_creation
+detection:
+  sel:
+    _raw|contains: 'dev/tcp'
+  condition: sel
+level: critical
+tags: [attack.command-and-control, attack.t1059.004]

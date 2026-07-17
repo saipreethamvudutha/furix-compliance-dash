@@ -2,38 +2,278 @@
   "provenance": "bundled-snapshot of ATT&CK technique -> CIS Control v8.1 edges, modelled on the MITRE CTID 'mitigates' mapping schema (capability_id/attack_object_id/mapping_type). Representative for offline dev+test; replace with a full ingest of the CTID mappings-explorer JSON (center-for-threat-informed-defense/mappings-explorer) in production.",
   "mapping_type": "mitigates",
   "edges": [
-    {"attack_object_id": "T1110",     "attack_object_name": "Brute Force",                     "capability_id": "Control 6",  "capability_name": "Access Control Management",        "relationship": "mitigates"},
-    {"attack_object_id": "T1110.001", "attack_object_name": "Password Guessing",               "capability_id": "Control 6",  "capability_name": "Access Control Management",        "relationship": "mitigates"},
-    {"attack_object_id": "T1078",     "attack_object_name": "Valid Accounts",                  "capability_id": "Control 6",  "capability_name": "Access Control Management",        "relationship": "mitigates"},
-    {"attack_object_id": "T1078.004", "attack_object_name": "Cloud Accounts",                  "capability_id": "Control 6",  "capability_name": "Access Control Management",        "relationship": "mitigates"},
-    {"attack_object_id": "T1136",     "attack_object_name": "Create Account",                  "capability_id": "Control 5",  "capability_name": "Account Management",               "relationship": "mitigates"},
-    {"attack_object_id": "T1136.003", "attack_object_name": "Cloud Account Creation",          "capability_id": "Control 5",  "capability_name": "Account Management",               "relationship": "mitigates"},
-    {"attack_object_id": "T1098",     "attack_object_name": "Account Manipulation",            "capability_id": "Control 5",  "capability_name": "Account Management",               "relationship": "mitigates"},
-    {"attack_object_id": "T1098",     "attack_object_name": "Account Manipulation",            "capability_id": "Control 6",  "capability_name": "Access Control Management",        "relationship": "mitigates"},
-    {"attack_object_id": "T1548",     "attack_object_name": "Abuse Elevation Control Mechanism","capability_id": "Control 6", "capability_name": "Access Control Management",        "relationship": "mitigates"},
-    {"attack_object_id": "T1068",     "attack_object_name": "Exploitation for Priv Escalation","capability_id": "Control 7", "capability_name": "Continuous Vulnerability Management","relationship": "mitigates"},
-    {"attack_object_id": "T1003",     "attack_object_name": "OS Credential Dumping",           "capability_id": "Control 10", "capability_name": "Malware Defenses",                 "relationship": "mitigates"},
-    {"attack_object_id": "T1003.001", "attack_object_name": "LSASS Memory",                    "capability_id": "Control 10", "capability_name": "Malware Defenses",                 "relationship": "mitigates"},
-    {"attack_object_id": "T1059",     "attack_object_name": "Command and Scripting Interpreter","capability_id": "Control 8", "capability_name": "Audit Log Management",             "relationship": "mitigates"},
-    {"attack_object_id": "T1059.001", "attack_object_name": "PowerShell",                      "capability_id": "Control 8",  "capability_name": "Audit Log Management",             "relationship": "mitigates"},
-    {"attack_object_id": "T1486",     "attack_object_name": "Data Encrypted for Impact",       "capability_id": "Control 10", "capability_name": "Malware Defenses",                 "relationship": "mitigates"},
-    {"attack_object_id": "T1486",     "attack_object_name": "Data Encrypted for Impact",       "capability_id": "Control 11", "capability_name": "Data Recovery",                    "relationship": "mitigates"},
-    {"attack_object_id": "T1543",     "attack_object_name": "Create or Modify System Process",  "capability_id": "Control 10", "capability_name": "Malware Defenses",                 "relationship": "mitigates"},
-    {"attack_object_id": "T1543.003", "attack_object_name": "Windows Service",                 "capability_id": "Control 10", "capability_name": "Malware Defenses",                 "relationship": "mitigates"},
-    {"attack_object_id": "T1531",     "attack_object_name": "Account Access Removal",          "capability_id": "Control 5",  "capability_name": "Account Management",               "relationship": "mitigates"},
-    {"attack_object_id": "T1070",     "attack_object_name": "Indicator Removal",               "capability_id": "Control 8",  "capability_name": "Audit Log Management",             "relationship": "mitigates"},
-    {"attack_object_id": "T1070.002", "attack_object_name": "Clear Linux or Mac Logs",         "capability_id": "Control 8",  "capability_name": "Audit Log Management",             "relationship": "mitigates"},
-    {"attack_object_id": "T1562",     "attack_object_name": "Impair Defenses",                 "capability_id": "Control 8",  "capability_name": "Audit Log Management",             "relationship": "mitigates"},
-    {"attack_object_id": "T1562.008", "attack_object_name": "Disable Cloud Logs",              "capability_id": "Control 8",  "capability_name": "Audit Log Management",             "relationship": "mitigates"},
-    {"attack_object_id": "T1530",     "attack_object_name": "Data from Cloud Storage",         "capability_id": "Control 3",  "capability_name": "Data Protection",                  "relationship": "mitigates"},
-    {"attack_object_id": "T1552",     "attack_object_name": "Unsecured Credentials",           "capability_id": "Control 3",  "capability_name": "Data Protection",                  "relationship": "mitigates"},
-    {"attack_object_id": "T1552.005", "attack_object_name": "Cloud Instance Metadata API",     "capability_id": "Control 3",  "capability_name": "Data Protection",                  "relationship": "mitigates"},
-    {"attack_object_id": "T1485",     "attack_object_name": "Data Destruction",               "capability_id": "Control 11", "capability_name": "Data Recovery",                    "relationship": "mitigates"},
-    {"attack_object_id": "T1021",     "attack_object_name": "Remote Services",                 "capability_id": "Control 13", "capability_name": "Network Monitoring and Defense",   "relationship": "mitigates"},
-    {"attack_object_id": "T1021.002", "attack_object_name": "SMB/Windows Admin Shares",        "capability_id": "Control 13", "capability_name": "Network Monitoring and Defense",   "relationship": "mitigates"},
-    {"attack_object_id": "T1550",     "attack_object_name": "Use Alternate Authentication Material","capability_id": "Control 13","capability_name": "Network Monitoring and Defense","relationship": "mitigates"},
-    {"attack_object_id": "T1190",     "attack_object_name": "Exploit Public-Facing Application","capability_id": "Control 7", "capability_name": "Continuous Vulnerability Management","relationship": "mitigates"},
-    {"attack_object_id": "T1190",     "attack_object_name": "Exploit Public-Facing Application","capability_id": "Control 16","capability_name": "Application Software Security",     "relationship": "mitigates"},
-    {"attack_object_id": "T1210",     "attack_object_name": "Exploitation of Remote Services", "capability_id": "Control 7",  "capability_name": "Continuous Vulnerability Management","relationship": "mitigates"}
+    {
+      "attack_object_id": "T1110",
+      "attack_object_name": "Brute Force",
+      "capability_id": "Control 6",
+      "capability_name": "Access Control Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1110.001",
+      "attack_object_name": "Password Guessing",
+      "capability_id": "Control 6",
+      "capability_name": "Access Control Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1078",
+      "attack_object_name": "Valid Accounts",
+      "capability_id": "Control 6",
+      "capability_name": "Access Control Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1078.004",
+      "attack_object_name": "Cloud Accounts",
+      "capability_id": "Control 6",
+      "capability_name": "Access Control Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1136",
+      "attack_object_name": "Create Account",
+      "capability_id": "Control 5",
+      "capability_name": "Account Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1136.003",
+      "attack_object_name": "Cloud Account Creation",
+      "capability_id": "Control 5",
+      "capability_name": "Account Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1098",
+      "attack_object_name": "Account Manipulation",
+      "capability_id": "Control 5",
+      "capability_name": "Account Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1098",
+      "attack_object_name": "Account Manipulation",
+      "capability_id": "Control 6",
+      "capability_name": "Access Control Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1548",
+      "attack_object_name": "Abuse Elevation Control Mechanism",
+      "capability_id": "Control 6",
+      "capability_name": "Access Control Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1068",
+      "attack_object_name": "Exploitation for Priv Escalation",
+      "capability_id": "Control 7",
+      "capability_name": "Continuous Vulnerability Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1003",
+      "attack_object_name": "OS Credential Dumping",
+      "capability_id": "Control 10",
+      "capability_name": "Malware Defenses",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1003.001",
+      "attack_object_name": "LSASS Memory",
+      "capability_id": "Control 10",
+      "capability_name": "Malware Defenses",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1059",
+      "attack_object_name": "Command and Scripting Interpreter",
+      "capability_id": "Control 8",
+      "capability_name": "Audit Log Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1059.001",
+      "attack_object_name": "PowerShell",
+      "capability_id": "Control 8",
+      "capability_name": "Audit Log Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1486",
+      "attack_object_name": "Data Encrypted for Impact",
+      "capability_id": "Control 10",
+      "capability_name": "Malware Defenses",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1486",
+      "attack_object_name": "Data Encrypted for Impact",
+      "capability_id": "Control 11",
+      "capability_name": "Data Recovery",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1543",
+      "attack_object_name": "Create or Modify System Process",
+      "capability_id": "Control 10",
+      "capability_name": "Malware Defenses",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1543.003",
+      "attack_object_name": "Windows Service",
+      "capability_id": "Control 10",
+      "capability_name": "Malware Defenses",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1531",
+      "attack_object_name": "Account Access Removal",
+      "capability_id": "Control 5",
+      "capability_name": "Account Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1070",
+      "attack_object_name": "Indicator Removal",
+      "capability_id": "Control 8",
+      "capability_name": "Audit Log Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1070.002",
+      "attack_object_name": "Clear Linux or Mac Logs",
+      "capability_id": "Control 8",
+      "capability_name": "Audit Log Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1562",
+      "attack_object_name": "Impair Defenses",
+      "capability_id": "Control 8",
+      "capability_name": "Audit Log Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1562.008",
+      "attack_object_name": "Disable Cloud Logs",
+      "capability_id": "Control 8",
+      "capability_name": "Audit Log Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1530",
+      "attack_object_name": "Data from Cloud Storage",
+      "capability_id": "Control 3",
+      "capability_name": "Data Protection",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1552",
+      "attack_object_name": "Unsecured Credentials",
+      "capability_id": "Control 3",
+      "capability_name": "Data Protection",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1552.005",
+      "attack_object_name": "Cloud Instance Metadata API",
+      "capability_id": "Control 3",
+      "capability_name": "Data Protection",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1485",
+      "attack_object_name": "Data Destruction",
+      "capability_id": "Control 11",
+      "capability_name": "Data Recovery",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1021",
+      "attack_object_name": "Remote Services",
+      "capability_id": "Control 13",
+      "capability_name": "Network Monitoring and Defense",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1021.002",
+      "attack_object_name": "SMB/Windows Admin Shares",
+      "capability_id": "Control 13",
+      "capability_name": "Network Monitoring and Defense",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1550",
+      "attack_object_name": "Use Alternate Authentication Material",
+      "capability_id": "Control 13",
+      "capability_name": "Network Monitoring and Defense",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1190",
+      "attack_object_name": "Exploit Public-Facing Application",
+      "capability_id": "Control 7",
+      "capability_name": "Continuous Vulnerability Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1190",
+      "attack_object_name": "Exploit Public-Facing Application",
+      "capability_id": "Control 16",
+      "capability_name": "Application Software Security",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1210",
+      "attack_object_name": "Exploitation of Remote Services",
+      "capability_id": "Control 7",
+      "capability_name": "Continuous Vulnerability Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1053.005",
+      "attack_object_name": "Scheduled Task",
+      "capability_id": "Control 8",
+      "capability_name": "Audit Log Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1053.005",
+      "attack_object_name": "Scheduled Task",
+      "capability_id": "Control 10",
+      "capability_name": "Malware Defenses",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1556",
+      "attack_object_name": "Modify Authentication Process",
+      "capability_id": "Control 6",
+      "capability_name": "Access Control Management",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1562.001",
+      "attack_object_name": "Disable or Modify Tools",
+      "capability_id": "Control 10",
+      "capability_name": "Malware Defenses",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1059.004",
+      "attack_object_name": "Unix Shell",
+      "capability_id": "Control 13",
+      "capability_name": "Network Monitoring and Defense",
+      "relationship": "mitigates"
+    },
+    {
+      "attack_object_id": "T1562",
+      "attack_object_name": "Impair Defenses",
+      "capability_id": "Control 12",
+      "capability_name": "Network Infrastructure Management",
+      "relationship": "mitigates"
+    }
   ]
 }

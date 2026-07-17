@@ -1,0 +1,14 @@
+title: Remote Interactive (RDP) Logon
+id: furix-0025-windows-rdp-logon
+status: stable
+description: EventID 4624 LogonType 10 — an interactive remote (RDP) logon, a lateral-movement signal.
+logsource:
+  product: windows
+detection:
+  sel:
+    _raw|contains|all:
+      - '4624'
+      - 'LogonType: 10'
+  condition: sel
+level: medium
+tags: [attack.lateral-movement, attack.t1021.001]

@@ -1,0 +1,12 @@
+title: Windows Event Log Cleared
+id: furix-0023-windows-clear-logs
+status: stable
+description: EventID 1102 — the security audit log was cleared, a common anti-forensics step.
+logsource:
+  product: windows
+detection:
+  sel:
+    _raw|contains: '1102'
+  condition: sel
+level: high
+tags: [attack.defense-evasion, attack.t1070.001]

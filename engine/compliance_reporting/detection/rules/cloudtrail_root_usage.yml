@@ -1,0 +1,13 @@
+title: AWS Root Account Activity
+id: furix-0015-cloudtrail-root
+status: stable
+description: The AWS root account was used — should be near-zero in normal ops.
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  sel:
+    _raw|contains: '"type":"Root"'
+  condition: sel
+level: high
+tags: [attack.privilege-escalation, attack.t1078.004]

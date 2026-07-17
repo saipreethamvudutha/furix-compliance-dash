@@ -285,6 +285,18 @@ def run_full_pipeline(raw_log: str, log_type: str = "auto") -> dict:
         print(f"  [Phase 1d ERROR] CIS validator failed: {e} — using unvalidated findings")
     phase_timings["phase_1d_cis_mapping"] = round(time.perf_counter() - _t2, 4)
 
+    # ── Phase 1d+: ATT&CK / Sigma pivot enrichment ────────────────────────────
+    # Sigma rules → techniques → controls, merged into the mapping so policy
+    # rules fire on attacks the keyword engine missed (control ← technique ← rule
+    # provenance attached to findings['attack_pivot']).
+    _t2b = time.perf_counter()
+    try:
+        from attack_enrich import enrich_findings
+        enrich_findings(raw_log, log_type, findings)
+    except Exception as e:
+        print(f"  [Phase 1d+ ERROR] ATT&CK pivot failed: {e} — keyword mapping only")
+    phase_timings["phase_1d_attack_pivot"] = round(time.perf_counter() - _t2b, 4)
+
     # ── Phase 1e-NEW: Post-LLM content-aware severity correction ─────────────
     _t3 = time.perf_counter()
     try:

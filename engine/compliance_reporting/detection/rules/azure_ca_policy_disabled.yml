@@ -1,0 +1,14 @@
+title: Azure AD Conditional Access Policy Disabled
+id: furix-0040-azure-ca-disabled
+status: stable
+description: A conditional access policy was disabled — removes an access-control guardrail.
+logsource:
+  service: azure
+detection:
+  sel:
+    _raw|contains: 'conditional access'
+  disabled:
+    _raw|contains: 'isable'
+  condition: sel and disabled
+level: high
+tags: [attack.defense-evasion, attack.t1556]

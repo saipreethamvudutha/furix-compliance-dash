@@ -1,0 +1,15 @@
+title: Security Group Opened to the Internet
+id: furix-0016-cloudtrail-open-sg
+status: stable
+description: An ingress rule was added allowing 0.0.0.0/0 — exposes resources to the internet.
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  ingress:
+    eventname: 'AuthorizeSecurityGroupIngress'
+  open:
+    _raw|contains: '0.0.0.0/0'
+  condition: ingress and open
+level: high
+tags: [attack.defense-evasion, attack.t1562]

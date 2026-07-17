@@ -1,0 +1,13 @@
+title: IAM Access Key Created
+id: furix-0017-cloudtrail-access-key
+status: stable
+description: A long-lived IAM access key was created — potential persistence/credential.
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  sel:
+    eventname: 'CreateAccessKey'
+  condition: sel
+level: medium
+tags: [attack.persistence, attack.t1098.001]

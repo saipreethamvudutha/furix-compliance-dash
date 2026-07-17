@@ -1,0 +1,14 @@
+title: Scheduled Task Created via schtasks
+id: furix-0026-windows-schtasks
+status: stable
+description: A scheduled task was created — a common persistence mechanism.
+logsource:
+  product: windows
+detection:
+  sel:
+    _raw|contains|all:
+      - 'schtasks'
+      - '/create'
+  condition: sel
+level: medium
+tags: [attack.persistence, attack.t1053.005]

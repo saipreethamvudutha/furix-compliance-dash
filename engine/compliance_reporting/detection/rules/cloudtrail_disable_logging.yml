@@ -1,0 +1,13 @@
+title: CloudTrail Logging Stopped
+id: furix-0014-cloudtrail-stop-logging
+status: stable
+description: CloudTrail logging was disabled — attackers blind the audit trail.
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  sel:
+    eventname: 'StopLogging'
+  condition: sel
+level: high
+tags: [attack.defense-evasion, attack.t1562.008]

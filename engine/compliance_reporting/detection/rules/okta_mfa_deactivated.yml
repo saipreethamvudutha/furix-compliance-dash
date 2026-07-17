@@ -1,0 +1,12 @@
+title: Okta MFA Factor Deactivated
+id: furix-0031-okta-mfa-deactivate
+status: stable
+description: A user's MFA factor was removed — weakens authentication, common pre-takeover.
+logsource:
+  service: okta
+detection:
+  sel:
+    _raw|contains: 'user.mfa.factor.deactivate'
+  condition: sel
+level: high
+tags: [attack.defense-evasion, attack.t1556.006]

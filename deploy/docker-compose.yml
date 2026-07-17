@@ -47,6 +47,9 @@ services:
       # download, no pgvector/graph needed). Set to 0 after running setup_ingestion
       # if you want retrieved evidence text.
       FURIX_DISABLE_RAG: ${FURIX_DISABLE_RAG:-1}
+      # ATT&CK/Sigma pivot enriches control mapping (log→technique→control) so
+      # policy rules fire on attacks the keyword engine misses. 1=on (default).
+      FURIX_ATTACK_PIVOT: ${FURIX_ATTACK_PIVOT:-1}
       FURIX_DATA_DIR: /data/source
       FURIX_SCF_JSON: /data/source/scf-full-2026.2.json
       FURIX_NIST_PDF: /data/source/NIST.CSWP.29.pdf
