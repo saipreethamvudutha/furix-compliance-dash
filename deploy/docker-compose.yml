@@ -20,11 +20,13 @@ services:
 
   ollama:
     image: ollama/ollama:latest     # serves Gemma (DLQ/unknown-format path only)
+    # Opt-in only: NOT started by `docker compose up -d`. Gemma is only used for
+    # unknown log formats, and most deploys point GEMMA_BASE_URL at an existing
+    # host Ollama. To run this one anyway: `docker compose --profile gemma up -d`.
+    profiles: ["gemma"]
     volumes:
       - ollama_models:/root/.ollama
     restart: unless-stopped
-    # If Ollama already runs elsewhere, delete this service and point
-    # GEMMA_BASE_URL at that host in .env.
 
   api:
     build: ../engine
