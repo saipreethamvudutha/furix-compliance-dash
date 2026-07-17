@@ -77,8 +77,29 @@ def _control_index(report: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
             "worst_severity": c.get("worst_severity", ""),
             "failing_tests": c.get("failing_tests", []),
             "evidence": evidence,
+            "attack": c.get("attack", []),
         }
     return index
+
+
+def _attack_for(via_controls: list[str], cidx: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
+    """Distinct ATT&CK technique/rule provenance across a requirement's controls."""
+    seen: set[tuple[str, str]] = set()
+    out: list[dict[str, str]] = []
+    for ctrl in via_controls:
+        for a in cidx.get(ctrl, {}).get("attack", []):
+            key = (a.get("technique_id", ""), a.get("rule_id", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({
+                "techniqueId": a.get("technique_id", ""),
+                "techniqueName": a.get("technique_name", ""),
+                "ruleId": a.get("rule_id", ""),
+                "ruleTitle": a.get("rule_title", ""),
+                "level": a.get("level", ""),
+            })
+    return out
 
 
 def _systems_for(via_controls: list[str], cidx: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
@@ -155,6 +176,9 @@ def _framework_to_dashboard(fw: Mapping[str, Any], report: Mapping[str, Any],
         rec = _recommendation(via, cidx) if status == "gap" else None
         if rec:
             row["aiRecommendation"] = rec
+        attack = _attack_for(via, cidx)
+        if attack:
+            row["attack"] = attack
         controls.append(row)
 
     pct = fw.get("compliance_pct")

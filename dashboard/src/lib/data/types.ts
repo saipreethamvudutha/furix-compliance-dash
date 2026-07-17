@@ -195,6 +195,14 @@ export interface ComplianceFramework {
   controls: ComplianceControl[];
 }
 
+export interface AttackRef {
+  techniqueId: string;
+  techniqueName: string;
+  ruleId: string;
+  ruleTitle: string;
+  level: string;
+}
+
 export interface ComplianceControl {
   id: string;
   reference: string;
@@ -204,6 +212,7 @@ export interface ComplianceControl {
   status: ControlStatus;
   systems: { name: string; status: ControlStatus; detail: string }[];
   aiRecommendation?: string;
+  attack?: AttackRef[];
 }
 
 export interface AIPerformance {

@@ -142,10 +142,41 @@ def _build_tests(evidence: list[dict[str, Any]], evaluated_any: bool) -> list[di
 
 
 # ── layer 2: controls ─────────────────────────────────────────────────────────
+def _attack_by_control(entries: list[dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
+    """
+    Aggregate the ATT&CK/Sigma provenance (findings.attack_pivot.trace) per CIS
+    control across the batch: {control_id: [{technique_id, technique_name,
+    rule_id, rule_title, level}]}, de-duplicated and deterministically sorted.
+    """
+    by_ctrl: dict[str, dict[tuple[str, str], dict[str, str]]] = {}
+    for entry in entries:
+        result = entry["result"]
+        if is_failed_result(result):
+            continue
+        trace = ((result.get("findings") or {}).get("attack_pivot") or {}).get("trace") or []
+        for row in trace:
+            cid = row.get("control_id")
+            if not cid:
+                continue
+            key = (row.get("technique_id", ""), row.get("rule_id", ""))
+            by_ctrl.setdefault(cid, {})[key] = {
+                "technique_id": row.get("technique_id", ""),
+                "technique_name": row.get("technique_name", ""),
+                "rule_id": row.get("rule_id", ""),
+                "rule_title": row.get("rule_title", ""),
+                "level": row.get("rule_level", ""),
+            }
+    return {
+        cid: [rows[k] for k in sorted(rows)]
+        for cid, rows in by_ctrl.items()
+    }
+
+
 def _build_controls(
     tests: list[dict[str, Any]], entries: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     tests_by_id = {t["test_id"]: t for t in tests}
+    attack_by_control = _attack_by_control(entries)
 
     # How often did detection map each control, independent of rule firing?
     observation_counts: dict[str, int] = {c: 0 for c in CONTROL_CATALOG}
@@ -187,6 +218,7 @@ def _build_controls(
                 "violation_count": sum(tests_by_id[t]["occurrences"] for t in failing),
                 "worst_severity": worst,
                 "observation_count": observation_counts[control_id],
+                "attack": attack_by_control.get(control_id, []),
             }
         )
     return controls

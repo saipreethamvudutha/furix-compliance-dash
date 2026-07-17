@@ -43,6 +43,22 @@ def _policy_finding(
     }
 
 
+def _attack_trace(rows: list[tuple[str, str, str, str, str, str]]) -> dict[str, Any]:
+    """Build a findings.attack_pivot block from (ctrl, ctrl_name, tid, tname, rule_id, rule_title, level) rows."""
+    trace = [
+        {"control_id": c, "control_name": cn, "technique_id": t, "technique_name": tn,
+         "relationship": "mitigates", "rule_id": rid, "rule_title": rt, "rule_level": lvl}
+        for (c, cn, t, tn, rid, rt, lvl) in rows
+    ]
+    return {
+        "technique_ids": sorted({r["technique_id"] for r in trace}),
+        "controls_from_pivot": sorted({r["control_id"] for r in trace}),
+        "controls_added": [],
+        "worst_level": "high",
+        "trace": trace,
+    }
+
+
 def _result(
     log_type: str,
     severity: str,
@@ -50,6 +66,7 @@ def _result(
     policy_findings: list[dict[str, Any]],
     run_timestamp: str,
     failure_stage: str | None = None,
+    attack_pivot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Minimal-but-faithful run_full_pipeline() result dict."""
     if failure_stage is not None:
@@ -64,12 +81,15 @@ def _result(
             "_run_timestamp": run_timestamp,
             "_density": {},
         }
+    findings = {
+        "log_type": log_type,
+        "severity": severity,
+        "cis_controls_mapping": {"control_ids": control_ids},
+    }
+    if attack_pivot is not None:
+        findings["attack_pivot"] = attack_pivot
     return {
-        "findings": {
-            "log_type": log_type,
-            "severity": severity,
-            "cis_controls_mapping": {"control_ids": control_ids},
-        },
+        "findings": findings,
         "investigation_query": f"Fixture investigation query for {log_type}.",
         "rag_results": [],
         "policy_findings": policy_findings,
@@ -114,6 +134,12 @@ def demo_batch() -> list[dict[str, Any]]:
                             "AdministratorAccess attached to backdoor_admin", "3"),
         ],
         "2026-07-14T09:00:01+00:00",
+        attack_pivot=_attack_trace([
+            ("Control 5", "Account Management", "T1136.003", "Cloud Account Creation",
+             "furix-0010-cloudtrail-createuser", "IAM User Created via CloudTrail", "high"),
+            ("Control 6", "Access Control Management", "T1098", "Account Manipulation",
+             "furix-0011-cloudtrail-admin-attach", "Administrator Policy Attached to IAM User", "critical"),
+        ]),
     )
     windows = _result(
         "windows_evtx", "critical", ["Control 2", "Control 8", "Control 10"],

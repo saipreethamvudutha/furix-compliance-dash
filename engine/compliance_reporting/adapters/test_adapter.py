@@ -100,6 +100,28 @@ def test_met_and_na_rows_have_no_systems():
                 assert "aiRecommendation" not in c
 
 
+def test_attack_provenance_surfaced_on_controls():
+    fws = report_to_frameworks(_report())
+    cis = next(f for f in fws if f["id"] == "cis")
+    by_ref = {c["reference"]: c for c in cis["controls"]}
+    # Control 5 & 6 carry the ATT&CK technique/rule that detected them
+    c6 = by_ref["Control 6"]
+    assert "attack" in c6 and c6["attack"], "expected ATT&CK provenance on Control 6"
+    a = c6["attack"][0]
+    assert {"techniqueId", "techniqueName", "ruleId", "ruleTitle", "level"} <= set(a)
+    assert any(x["techniqueId"] == "T1098" for x in c6["attack"])
+    # it also flows to the frameworks that map through those controls (NIST/PCI)
+    nist = next(f for f in fws if f["id"] == "nist")
+    assert any(c.get("attack") for c in nist["controls"]), "ATT&CK should reach NIST reqs via controls"
+
+
+def test_controls_without_attack_omit_the_field():
+    fws = report_to_frameworks(_report())
+    cis = next(f for f in fws if f["id"] == "cis")
+    by_ref = {c["reference"]: c for c in cis["controls"]}
+    assert "attack" not in by_ref["Control 1"]  # not monitored, no detection
+
+
 def test_summary_shape():
     s = report_to_summary(_report())
     for k in ("report_id", "total_logs", "total_violations", "frameworks", "integrity_sha256"):
