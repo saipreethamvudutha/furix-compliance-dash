@@ -351,38 +351,43 @@ def run_full_pipeline(raw_log: str, log_type: str = "auto") -> dict:
 
     # ── Phase 2: RAG retrieval ────────────────────────────────────────────────
     _t7 = time.perf_counter()
-    try:
-        rag_results, rag_timings = retrieve_cis_controls_llm(
-            embedder=embedder,
-            reranker=reranker,
-            findings=findings,
-            investigation_query=investigation_query,
-            log_type=log_type,
-            density=density,
-        )
-    except Exception as e:
-        print(f"  [Phase 2 ERROR] RAG retrieval failed: {e}")
-        phase_timings["phase_2_rag_retrieval"] = round(time.perf_counter() - _t7, 4)
-        return {
-            "findings":             findings,
-            "investigation_query":  investigation_query,
-            "raw_log_reference":    llm_result.get("raw_log_reference", {}),
-            "rag_results":          [],
-            "policy_findings":      policy_findings,
-            "policy_summary":       policy_summary,
-            "compliance_mapping":   _aggregate_compliance_mapping(findings, policy_findings, []),
-            "_query_fallback_used": llm_result.get("_query_fallback_used", False),
-            "_density":             density,
-            "_parse_error":         str(e),
-            "_failure_stage":       "rag_retrieval",
-            "_log_type":            log_type,
-            "timing": {
-                "run_timestamp":     _run_timestamp,
-                "phase_timings":     phase_timings,
-                "rag_timings":       {},
-                "total_elapsed_sec": round(time.perf_counter() - _pipeline_start, 4),
-            },
-        }
+    if os.environ.get("FURIX_DISABLE_RAG") == "1" or embedder is None:
+        # RAG evidence layer disabled — the deterministic verdict (findings,
+        # policy, CIS/NIST/HIPAA/PCI mapping) is complete without it. Clean success.
+        rag_results, rag_timings = [], {}
+    else:
+        try:
+            rag_results, rag_timings = retrieve_cis_controls_llm(
+                embedder=embedder,
+                reranker=reranker,
+                findings=findings,
+                investigation_query=investigation_query,
+                log_type=log_type,
+                density=density,
+            )
+        except Exception as e:
+            print(f"  [Phase 2 ERROR] RAG retrieval failed: {e}")
+            phase_timings["phase_2_rag_retrieval"] = round(time.perf_counter() - _t7, 4)
+            return {
+                "findings":             findings,
+                "investigation_query":  investigation_query,
+                "raw_log_reference":    llm_result.get("raw_log_reference", {}),
+                "rag_results":          [],
+                "policy_findings":      policy_findings,
+                "policy_summary":       policy_summary,
+                "compliance_mapping":   _aggregate_compliance_mapping(findings, policy_findings, []),
+                "_query_fallback_used": llm_result.get("_query_fallback_used", False),
+                "_density":             density,
+                "_parse_error":         str(e),
+                "_failure_stage":       "rag_retrieval",
+                "_log_type":            log_type,
+                "timing": {
+                    "run_timestamp":     _run_timestamp,
+                    "phase_timings":     phase_timings,
+                    "rag_timings":       {},
+                    "total_elapsed_sec": round(time.perf_counter() - _pipeline_start, 4),
+                },
+            }
 
     phase_timings["phase_2_rag_retrieval"] = round(time.perf_counter() - _t7, 4)
 

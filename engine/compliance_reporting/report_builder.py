@@ -70,9 +70,17 @@ def normalize_batch(batch: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return normalized
 
 
+# Stages that leave a usable verdict (findings + policy + control mapping) behind.
+# "rag_retrieval" only means the optional evidence-text layer was unavailable — the
+# deterministic compliance result is intact, so it counts as a (degraded) success.
+_NON_FATAL_STAGES = {None, "rag_retrieval"}
+
+
 def is_failed_result(result: Mapping[str, Any]) -> bool:
-    """Mirror of DeadLetterQueue._is_failure: failed stage OR empty findings."""
-    return result.get("_failure_stage") is not None or not result.get("findings")
+    """A result is failed if its stage is fatal, or it has no findings at all."""
+    if result.get("_failure_stage") not in _NON_FATAL_STAGES:
+        return True
+    return not result.get("findings")
 
 
 # ── evidence extraction ───────────────────────────────────────────────────────

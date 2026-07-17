@@ -52,13 +52,22 @@ class SecureBERTEmbedder:
         return vecs.tolist()
 
 
-print("Loading bi-encoder (SecureBERT2.0-biencoder)...")
-embedder = SecureBERTEmbedder(EMBED_MODEL)
+# FURIX_DISABLE_RAG=1 skips loading SecureBERT entirely — for deployments that
+# run the deterministic pipeline without the RAG evidence layer (no pgvector
+# chunk store / no graph). embedder/reranker are None; the RAG phase is skipped
+# in pipeline.py, so they are never used.
+if os.environ.get("FURIX_DISABLE_RAG") == "1":
+    print("⏭️  FURIX_DISABLE_RAG=1 — skipping SecureBERT load (RAG evidence disabled).")
+    embedder = None
+    reranker = None
+else:
+    print("Loading bi-encoder (SecureBERT2.0-biencoder)...")
+    embedder = SecureBERTEmbedder(EMBED_MODEL)
 
-print(f"\nLoading cross-encoder (SecureBERT2.0-cross_encoder) (device={DEVICE})...")
-reranker = CrossEncoder(
-    RERANK_MODEL, device=DEVICE,
-    trust_remote_code=True,
-    max_length=512,
-)
-print("Cross-encoder ready ✅")
+    print(f"\nLoading cross-encoder (SecureBERT2.0-cross_encoder) (device={DEVICE})...")
+    reranker = CrossEncoder(
+        RERANK_MODEL, device=DEVICE,
+        trust_remote_code=True,
+        max_length=512,
+    )
+    print("Cross-encoder ready ✅")

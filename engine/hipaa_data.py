@@ -18,9 +18,17 @@ Exported for use by retrieval_engine.py:
 import json
 from config import HIPAA_JSON_PATH
 
-# ── Load HIPAA JSON ───────────────────────────────────────────────────────────
-with open(HIPAA_JSON_PATH) as f:
-    hipaa_json = json.load(f)
+# ── Load HIPAA JSON (graceful) ────────────────────────────────────────────────
+# The HIPAA spec-registry file drives HIPAA *evidence retrieval* only. If it is
+# absent, degrade to empty tables — the HIPAA *framework* rollup comes from the
+# SCF crosswalk (registry), independent of this file, so compliance still works.
+try:
+    with open(HIPAA_JSON_PATH) as f:
+        hipaa_json = json.load(f)
+except (FileNotFoundError, OSError, ValueError) as _e:
+    print(f"⚠️  HIPAA spec JSON not found at {HIPAA_JSON_PATH} ({_e}); "
+          f"HIPAA evidence tables empty. Framework rollup still works via the SCF crosswalk.")
+    hipaa_json = {"safeguard_categories": []}
 
 # ── Index 1: CSF category prefix → list of spec codes ────────────────────────
 # e.g. "PR.AA" → ["AS-WS-AS", "TS-AC-UUI", ...]
