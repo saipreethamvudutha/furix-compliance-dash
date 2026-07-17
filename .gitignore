@@ -16,3 +16,7 @@ deploy/source_data/*.json
 deploy/source_data/*.pdf
 # models
 *.safetensors
+
+# allow the two source-data files we ship for turnkey deploy
+!deploy/source_data/scf-full-2026.2.json
+!deploy/source_data/NIST.CSWP.29.pdf
