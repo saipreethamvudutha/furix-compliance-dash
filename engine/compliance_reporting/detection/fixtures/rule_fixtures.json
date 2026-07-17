@@ -1,0 +1,83 @@
+{
+  "_comment": "CI ground truth: every rule id must (a) match every 'match' example and (b) NOT match every 'nomatch' example. test_detection.py enforces this and fails if any rule lacks fixtures.",
+  "furix-0001-ssh-bruteforce-success": {
+    "match": [
+      {"log_type": "syslog", "raw_log": "Jan 1 10:00:01 host sshd[1]: Failed password for root from 45.33.32.156\nJan 1 10:05:01 host sshd[1]: Accepted password for root from 45.33.32.156"}
+    ],
+    "nomatch": [
+      {"log_type": "syslog", "raw_log": "Jan 1 10:00:01 host sshd[1]: Failed password for root from 45.33.32.156"}
+    ]
+  },
+  "furix-0002-ssh-bruteforce": {
+    "match": [
+      {"log_type": "syslog", "raw_log": "Jan 1 10:00:01 host sshd[1]: Failed password for admin from 10.0.0.9"}
+    ],
+    "nomatch": [
+      {"log_type": "syslog", "raw_log": "Jan 1 10:00:01 host sshd[1]: Accepted publickey for deploy"}
+    ]
+  },
+  "furix-0010-cloudtrail-createuser": {
+    "match": [
+      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"CreateUser\",\"eventSource\":\"iam.amazonaws.com\",\"requestParameters\":{\"userName\":\"backdoor_admin\"}}"}
+    ],
+    "nomatch": [
+      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"ConsoleLogin\",\"eventSource\":\"signin.amazonaws.com\"}"}
+    ]
+  },
+  "furix-0011-cloudtrail-admin-attach": {
+    "match": [
+      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"AttachUserPolicy\",\"requestParameters\":{\"policyArn\":\"arn:aws:iam::aws:policy/AdministratorAccess\",\"userName\":\"backdoor_admin\"}}"}
+    ],
+    "nomatch": [
+      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"AttachUserPolicy\",\"requestParameters\":{\"policyArn\":\"arn:aws:iam::aws:policy/ReadOnlyAccess\",\"userName\":\"analyst\"}}"}
+    ]
+  },
+  "furix-0012-cloudtrail-no-mfa": {
+    "match": [
+      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"ConsoleLogin\",\"responseElements\":{\"ConsoleLogin\":\"Success\"},\"additionalEventData\":{\"MFAUsed\":\"No\"}}"}
+    ],
+    "nomatch": [
+      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"ConsoleLogin\",\"responseElements\":{\"ConsoleLogin\":\"Success\"},\"additionalEventData\":{\"MFAUsed\":\"Yes\"}}"}
+    ]
+  },
+  "furix-0013-cloudtrail-getsecret": {
+    "match": [
+      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"GetSecretValue\",\"eventSource\":\"secretsmanager.amazonaws.com\",\"requestParameters\":{\"secretId\":\"prod/db/password\"}}"}
+    ],
+    "nomatch": [
+      {"log_type": "cloudtrail", "raw_log": "{\"eventName\":\"DescribeSecret\",\"eventSource\":\"secretsmanager.amazonaws.com\"}"}
+    ]
+  },
+  "furix-0020-windows-mimikatz": {
+    "match": [
+      {"log_type": "windows_evtx", "raw_log": "EventID: 4688 Process: C:\\Tools\\mimikatz.exe CommandLine: sekurlsa::logonpasswords"}
+    ],
+    "nomatch": [
+      {"log_type": "windows_evtx", "raw_log": "EventID: 4688 Process: C:\\Windows\\explorer.exe"}
+    ]
+  },
+  "furix-0021-windows-new-service": {
+    "match": [
+      {"log_type": "windows_evtx", "raw_log": "EventID: 7045 A new service was installed. Service Name: EvilSvc"}
+    ],
+    "nomatch": [
+      {"log_type": "windows_evtx", "raw_log": "EventID: 4624 An account was successfully logged on. Service ticket issued"}
+    ]
+  },
+  "furix-0022-windows-4720": {
+    "match": [
+      {"log_type": "windows_evtx", "raw_log": "EventID: 4720 A user account was created. Account Name: backdoor_user"}
+    ],
+    "nomatch": [
+      {"log_type": "windows_evtx", "raw_log": "EventID: 4624 An account was successfully logged on."}
+    ]
+  },
+  "furix-0030-okta-super-admin": {
+    "match": [
+      {"log_type": "okta_sso", "raw_log": "{\"eventType\":\"user.account.privilege.grant\",\"target\":[{\"displayName\":\"Super Administrator\"}]}"}
+    ],
+    "nomatch": [
+      {"log_type": "okta_sso", "raw_log": "{\"eventType\":\"user.session.start\",\"outcome\":{\"result\":\"SUCCESS\"}}"}
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+title: Windows Account Created (EventID 4720)
+id: furix-0022-windows-4720
+status: stable
+description: A local user account was created on a Windows host.
+logsource:
+  product: windows
+detection:
+  selection:
+    _raw|contains: '4720'
+  condition: selection
+level: high
+tags:
+  - attack.persistence
+  - attack.t1136

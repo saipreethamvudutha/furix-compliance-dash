@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+
+# Environment
+.env
+
+# Output files
+Output/
+
+# Source data (large files)
+Source_data/
+
+.gstack/

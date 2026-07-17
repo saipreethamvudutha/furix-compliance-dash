@@ -1,0 +1,559 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+}
+
+:root {
+  --radius: 0.875rem;
+  /* Deep textured teal-green base */
+  --bg-deep:      #0d2024;
+  --bg-panel:     #133036;
+  --bg-panel-2:   #174149;
+  --bg-elev:      #1c4f57;
+  --teal-glow:    #6fd6c4;
+  --teal-soft:    #8ad6c5;
+  --teal-line:    #4ea99a;
+
+  /* Copper / bronze accents */
+  --copper:       #c98a4b;
+  --copper-bright:#e0a063;
+  --copper-deep:  #8a5a2e;
+  --bronze:       #b87a3f;
+
+  /* Criticality */
+  --crit-red:     #d46a5e;
+  --crit-orange:  #d59a52;
+  --crit-yellow:  #e1c069;
+  --status-ok:    #6fd6b3;
+
+  --background: var(--bg-deep);
+  --foreground: #e7d9c2;
+  --card: var(--bg-panel);
+  --card-foreground: #e7d9c2;
+  --primary: var(--copper);
+  --primary-foreground: #1a1612;
+  --muted: #1a3a40;
+  --muted-foreground: #8aa5a4;
+  --accent: var(--bg-panel-2);
+  --accent-foreground: #e7d9c2;
+  --destructive: var(--crit-red);
+  --border: #224b52;
+  --ring: var(--teal-glow);
+
+  /* Themable surfaces (read by inline styles in framing components) */
+  --sidebar-grad-top: #13383f;
+  --sidebar-grad-bot: #0c252a;
+  --sidebar-shadow-r: rgba(0,0,0,0.45);
+  --topbar-grad-top: #1a4047;
+  --topbar-grad-bot: #0e2a30;
+  --topbar-text:    #e7d9c2;
+  --drilldown-grad-top: #143037;
+  --drilldown-grad-bot: #0e2429;
+  --tree-line: rgba(111,214,196,0.45);
+  --section-heading: #e0a063;
+  --section-subtext: #9bb3b1;
+  --panel-text: #e7d9c2;
+  --panel-text-muted: #9bb3b1;
+  --inset-bg-top: rgba(0,0,0,0.35);
+  --inset-bg-bot: rgba(0,0,0,0.05);
+  --inset-base:   var(--bg-panel-2);
+  --inset-border: #0b2226;
+  --divider:      #1f4148;
+  --row-border:   #1f4148;
+  --plaque-text:  #f5dfb6;
+  --plaque-text-muted: #d8b988;
+  /* circular tiles / buttons (sidebar icons, topbar buttons) */
+  --tile-grad-top: #1a4047;
+  --tile-grad-bot: #0d272c;
+  --tile-text:     #7eaeae;
+  --tile-text-accent: #cbb89a;
+  --tile-border:   transparent;
+  /* emblem (shield) */
+  --emblem-grad-from: #2a6066;
+  --emblem-grad-to:   #0e2a30;
+  /* dark inset surfaces used for progress bars, pill controls, search box */
+  --pill-track-grad-top: rgba(0,0,0,0.45);
+  --pill-track-grad-bot: rgba(0,0,0,0.15);
+  --pill-shadow-inset:   rgba(0,0,0,0.55);
+  --progress-track-bg:   rgba(0,0,0,0.45);
+  --progress-track-shadow: rgba(0,0,0,0.6);
+  --search-bg-top: rgba(0,0,0,0.35);
+  --search-bg-bot: rgba(0,0,0,0.08);
+  --search-border: #0a2024;
+  --tooltip-bg:    #0e2a30;
+  --tooltip-border:#1f4148;
+  /* metric numeric values */
+  --metric-teal:   #cfe9e0;
+  --metric-copper: #f3d6a8;
+  --dial-text:     #f5e2c0;
+  /* copper disc (sidebar emblem, profile avatar, active icon, scan icon) */
+  --disc-from:   #e0a063;
+  --disc-to:     #7a4a22;
+  --disc-text:   #2a1a0c;
+  --disc-shadow: rgba(0,0,0,0.55);
+  /* dial core (NewScan button) */
+  --core-from:   #d8a368;
+  --core-mid:    #7a4a22;
+  --core-to:     #3d2410;
+  /* scan progress + status badge */
+  --progress-fill: linear-gradient(90deg, #6fd6c4, #e0a063);
+  --progress-glow: 0 0 8px rgba(111,214,196,0.6);
+  --badge-run-bg:  rgba(111,214,196,0.15);
+  --badge-run-fg:  #6fd6c4;
+  --badge-wait-bg: rgba(225,192,105,0.15);
+  --badge-wait-fg: #e1c069;
+}
+
+[data-theme="light"] {
+  --background: #ffffff;            /* clean white page bg */
+  --foreground: #2a2620;
+  --card: #f6f1e3;
+  --card-foreground: #2a2620;
+  --muted: #e6dfce;
+  --muted-foreground: #5b574c;
+  --accent: #f1ead8;
+  --accent-foreground: #2a2620;
+  --border: #d8cfba;
+  --ring: #b87a3f;
+
+  --sidebar-grad-top: #ffffff;
+  --sidebar-grad-bot: #f6f6f6;
+  --sidebar-shadow-r: rgba(0,0,0,0.08);
+  --topbar-grad-top: #ffffff;
+  --topbar-grad-bot: #f6f6f6;
+  --topbar-text:    #1a1410;
+  --drilldown-grad-top: #ffffff;
+  --drilldown-grad-bot: #fafafa;
+  --tree-line: rgba(0,0,0,0.18);
+  --section-heading: #1a1410;
+  --section-subtext: #4a4538;
+  --panel-text: #14110b;
+  --panel-text-muted: #4a4538;
+  --inset-bg-top: rgba(255,255,255,0.6);
+  --inset-bg-bot: rgba(255,255,255,0.15);
+  --inset-base:   #f9f4e6;
+  --inset-border: #d8cfba;
+  --divider:      #e5e5e5;
+  --row-border:   #ececec;
+  --plaque-text:  #2e1c10;
+  --plaque-text-muted: #5a3a1c;
+  --section-subtext: #3a3326;
+  /* light tiles */
+  --tile-grad-top: #fafafa;
+  --tile-grad-bot: #eaeaea;
+  --tile-text:     #5b4a30;
+  --tile-text-accent: #5a3a1c;
+  --tile-border:   #e0e0e0;
+  --emblem-grad-from: #fbf2dd;
+  --emblem-grad-to:   #e2c896;
+  --pill-track-grad-top: rgba(120,90,40,0.12);
+  --pill-track-grad-bot: rgba(120,90,40,0.04);
+  --pill-shadow-inset:   rgba(120,90,40,0.25);
+  --progress-track-bg:   rgba(120,90,40,0.18);
+  --progress-track-shadow: rgba(120,90,40,0.3);
+  --search-bg-top: #fafafa;
+  --search-bg-bot: #f0f0f0;
+  --search-border: #e0e0e0;
+  --tooltip-bg:    #f6f1e3;
+  --tooltip-border:#c8b894;
+  --metric-teal:   #1a564f;
+  --metric-copper: #6a3e1c;
+  --dial-text:     #1a1410;
+  /* light: all "copper discs" become white tiles with copper icon */
+  --disc-from:   #ffffff;
+  --disc-to:     #f0f0f0;
+  --disc-text:   #8a5a2e;
+  --disc-shadow: rgba(0,0,0,0.08);
+  /* dial core also white in light mode */
+  /* dial core in light mode: subtle bevel so it doesn't vanish on white */
+  --core-from:   #ffffff;
+  --core-mid:    #e8e8e8;
+  --core-to:     #c8c8c8;
+  /* neutral progress + badge in light mode */
+  --progress-fill: linear-gradient(90deg, #a0a0a0, #707070);
+  --progress-glow: none;
+  --badge-run-bg:  #f0f0f0;
+  --badge-run-fg:  #1a1410;
+  --badge-wait-bg: #f6f0e0;
+  --badge-wait-fg: #6a4a22;
+}
+
+[data-theme="light"] body::before {
+  background:
+    radial-gradient(ellipse at 70% 10%, rgba(220,200,160,0.25), transparent 50%),
+    radial-gradient(ellipse at 20% 90%, rgba(240,230,200,0.3), transparent 55%);
+}
+
+[data-theme="light"] .skeuo-panel {
+  background-color: #ffffff;
+  background-image: none;
+  border: 1px solid #e5e5e5;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,1),
+    0 1px 2px rgba(0,0,0,0.04),
+    0 8px 20px rgba(0,0,0,0.05);
+}
+
+[data-theme="light"] .skeuo-inset {
+  background: #fafafa;
+  border: 1px solid #e5e5e5;
+  box-shadow:
+    inset 0 1px 2px rgba(0,0,0,0.04);
+}
+
+[data-theme="light"] .glass-panel {
+  background-image:
+    linear-gradient(rgba(0,0,0,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,0,0,0.025) 1px, transparent 1px),
+    linear-gradient(180deg, #ffffff, #fafafa);
+  border: 1px solid #e5e5e5;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,1),
+    0 8px 20px rgba(0,0,0,0.05);
+}
+
+[data-theme="light"] .engraved-bar {
+  background: #ffffff;
+  border-bottom: 1px solid #e5e5e5;
+  box-shadow:
+    0 1px 2px rgba(0,0,0,0.04);
+}
+
+/* light-mode plaques are defined further below as pure white */
+
+[data-theme="light"] .shelf {
+  background: linear-gradient(180deg, #c89868, #8a5a2e);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.4),
+    inset 0 -2px 6px rgba(60,30,10,0.3),
+    0 6px 12px rgba(120,90,40,0.25);
+}
+
+[data-theme="light"] .dial-wrap {
+  background: radial-gradient(circle at 50% 30%, #fafafa 0%, #d8d8d8 70%);
+  box-shadow:
+    0 0 0 6px #efefef,
+    0 0 0 7px #c0c0c0,
+    inset 0 4px 8px rgba(255,255,255,0.9),
+    inset 0 -8px 16px rgba(0,0,0,0.12),
+    0 20px 40px rgba(0,0,0,0.1);
+}
+[data-theme="light"] .dial-core {
+  box-shadow:
+    inset 0 3px 6px rgba(255,255,255,1),
+    inset 0 -8px 14px rgba(0,0,0,0.15),
+    0 6px 14px rgba(0,0,0,0.18),
+    0 0 0 1px rgba(0,0,0,0.06);
+  text-shadow: 0 1px 0 rgba(255,255,255,0.8);
+}
+
+/* light-mode dial core is now driven by --core-* vars */
+
+[data-theme="light"] .plaque       { background: #ffffff !important; background-image: none !important; color:#1a1410; border: 1px solid #e5e5e5; box-shadow: inset 0 1px 0 #fff, 0 2px 6px rgba(0,0,0,0.05); }
+[data-theme="light"] .plaque-crit  { background: #ffffff !important; background-image: none !important; color:#a02418; border-left: 4px solid #d46a5e; }
+[data-theme="light"] .plaque-high  { background: #ffffff !important; background-image: none !important; color:#8a5a14; border-left: 4px solid #d59a52; }
+[data-theme="light"] .plaque-med   { background: #ffffff !important; background-image: none !important; color:#6a5a14; border-left: 4px solid #e1c069; }
+
+[data-theme="light"] {
+  background: #ffffff;
+}
+[data-theme="light"] html, [data-theme="light"] body { background: #ffffff; color: #14110b; }
+
+.book span { color: inherit; }
+/* light-mode books: pure white with subtle bevel — no color */
+[data-theme="light"] .book,
+[data-theme="light"] .book.teal,
+[data-theme="light"] .book.bronze,
+[data-theme="light"] .book.olive,
+[data-theme="light"] .book.brown {
+  background:
+    linear-gradient(90deg, #ffffff 0%, #fafafa 8%, #ececec 100%) !important;
+  border: 1px solid #e5e5e5 !important;
+  color: #1a1410 !important;
+  box-shadow:
+    inset 2px 0 0 rgba(255,255,255,1),
+    inset -3px 0 6px rgba(0,0,0,0.06),
+    0 6px 12px rgba(0,0,0,0.06) !important;
+}
+[data-theme="light"] .book span { color: #1a1410 !important; }
+
+[data-theme="light"] .shelf {
+  background: linear-gradient(180deg, #e0e0e0, #c0c0c0);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.7),
+    inset 0 -2px 6px rgba(0,0,0,0.1),
+    0 6px 12px rgba(0,0,0,0.08);
+}
+
+@layer base {
+  * { @apply border-border; }
+  html, body {
+    background: var(--bg-deep);
+    color: var(--foreground);
+    font-feature-settings: "ss01", "cv11";
+  }
+}
+
+/* ===== Skeuomorphic textured panel ===== */
+.skeuo-panel {
+  background-color: var(--bg-panel);
+  background-image:
+    radial-gradient(ellipse at 20% 0%, rgba(255,255,255,0.04), transparent 60%),
+    radial-gradient(ellipse at 100% 100%, rgba(0,0,0,0.35), transparent 60%),
+    repeating-linear-gradient(45deg, rgba(255,255,255,0.012) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(-45deg, rgba(0,0,0,0.04) 0 1px, transparent 1px 3px);
+  border: 1px solid #1f4148;
+  border-radius: 22px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.05),
+    inset 0 -2px 6px rgba(0,0,0,0.35),
+    0 12px 30px rgba(0,0,0,0.35);
+}
+
+.skeuo-inset {
+  background:
+    linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.05)),
+    var(--bg-panel-2);
+  border: 1px solid #0b2226;
+  border-radius: 16px;
+  box-shadow:
+    inset 0 2px 5px rgba(0,0,0,0.55),
+    inset 0 -1px 0 rgba(255,255,255,0.04);
+}
+
+/* Glassmorphic metric panel */
+.glass-panel {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015)),
+    radial-gradient(ellipse at 80% 110%, rgba(70,90,160,0.20), transparent 55%),
+    radial-gradient(ellipse at 20% -10%, rgba(111,214,196,0.12), transparent 60%),
+    linear-gradient(180deg, rgba(20,56,64,0.55), rgba(20,40,60,0.55));
+  background-image:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015)),
+    radial-gradient(ellipse at 80% 110%, rgba(70,90,160,0.20), transparent 55%),
+    radial-gradient(ellipse at 20% -10%, rgba(111,214,196,0.12), transparent 60%),
+    linear-gradient(180deg, rgba(20,56,64,0.55), rgba(20,40,60,0.55));
+  background-size: 22px 22px, 22px 22px, auto, auto, auto, auto;
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 22px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.12),
+    inset 0 -1px 0 rgba(0,0,0,0.35),
+    0 10px 30px rgba(0,0,0,0.35);
+}
+
+/* Engraved plaque */
+.plaque {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.18)),
+    linear-gradient(180deg, #6a4a2a, #4a3320);
+  border: 1px solid #2c1d10;
+  border-radius: 14px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,224,180,0.25),
+    inset 0 -2px 4px rgba(0,0,0,0.55),
+    0 4px 10px rgba(0,0,0,0.35);
+  color: #f1d8a7;
+}
+.plaque-crit { background: linear-gradient(180deg,#7a3a32,#4a2620); }
+.plaque-high { background: linear-gradient(180deg,#a07434,#664020); }
+.plaque-med  { background: linear-gradient(180deg,#8a7138,#5a4520); }
+
+/* Engraved header bar */
+.engraved-bar {
+  background:
+    linear-gradient(180deg, #1a4047, #0e2a30);
+  border-bottom: 1px solid #0a1f23;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.05),
+    inset 0 -1px 0 rgba(0,0,0,0.6),
+    0 6px 14px rgba(0,0,0,0.35);
+}
+
+/* Copper text accent */
+.text-copper { color: var(--copper-bright); }
+.text-copper-deep { color: var(--copper); }
+.text-teal-glow { color: var(--teal-glow); }
+
+/* Glow numbers */
+.numeric-glow {
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 18px rgba(111,214,196,0.35);
+}
+[data-theme="light"] .numeric-glow { text-shadow: none; }
+
+/* Skeuo dial (New Scan button) */
+.dial-wrap {
+  position: relative;
+  width: 100px; height: 100px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 30%, #2a6066 0%, #0c2226 70%);
+  box-shadow:
+    0 0 0 5px #0e2c32,
+    0 0 0 6px #1d4248,
+    inset 0 3px 6px rgba(255,255,255,0.05),
+    inset 0 -6px 12px rgba(0,0,0,0.55),
+    0 14px 28px rgba(0,0,0,0.5);
+  display:flex; align-items:center; justify-content:center;
+}
+.dial-ticks { position:absolute; inset:6px; border-radius:50%; pointer-events:none; }
+.dial-tick {
+  position:absolute; left:50%; top:50%;
+  width:2px; height:8px;
+  background: rgba(232,194,140,0.55);
+  transform-origin: 1px 76px;
+}
+.dial-led {
+  position:absolute; width:6px; height:6px; border-radius:50%;
+  background: var(--teal-glow);
+  box-shadow: 0 0 8px var(--teal-glow), 0 0 18px rgba(111,214,196,0.6);
+}
+.dial-core {
+  width: 66px; height: 66px; border-radius:50%;
+  background:
+    radial-gradient(circle at 50% 30%, var(--core-from), var(--core-mid) 70%, var(--core-to) 100%);
+  box-shadow:
+    inset 0 3px 5px rgba(255,224,180,0.5),
+    inset 0 -5px 10px rgba(0,0,0,0.6),
+    0 4px 10px rgba(0,0,0,0.5);
+  display:flex; align-items:center; justify-content:center;
+  color: var(--dial-text);
+  font-weight:600;
+  letter-spacing:0.02em;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.25), 0 -1px 1px rgba(0,0,0,0.5);
+  cursor:pointer;
+  transition: transform 0.15s ease;
+  font-size: 11px;
+}
+.dial-core:hover { transform: scale(0.985); }
+
+/* CSV download button (Reports) */
+.csv-btn {
+  background: radial-gradient(circle at 35% 25%, #e0a063, #7a4a22 80%);
+  color: #2a1a0c;
+  box-shadow:
+    inset 0 1px 0 rgba(255,224,180,0.5),
+    inset 0 -2px 4px rgba(0,0,0,0.55);
+  border: 1px solid transparent;
+}
+[data-theme="light"] .csv-btn {
+  background: linear-gradient(180deg, #ffffff, #f4f4f4);
+  color: #5a3a1c;
+  border: 1px solid #e0e0e0;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,1),
+    0 1px 2px rgba(0,0,0,0.06);
+}
+[data-theme="light"] .csv-btn:hover {
+  background: linear-gradient(180deg, #fbf2e2, #f0e6d0);
+  border-color: #d8c4a0;
+  color: #6a3e1c;
+}
+
+/* Book object (Reports) */
+.book {
+  position: relative;
+  width: 64px; height: 200px;
+  border-radius: 4px 6px 6px 4px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.35)),
+    linear-gradient(90deg, #4a2c14 0%, #6a3e1f 8%, #3b2210 100%);
+  box-shadow:
+    inset 2px 0 0 rgba(255,224,180,0.18),
+    inset -3px 0 6px rgba(0,0,0,0.6),
+    0 6px 12px rgba(0,0,0,0.5);
+  color: #f1d8a7;
+  display:flex; flex-direction:column; align-items:center; justify-content:space-between;
+  padding: 14px 6px;
+  font-weight:600;
+}
+.book.teal { background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.35)), linear-gradient(90deg, #15464d 0%, #1f6068 8%, #0d3036 100%); color:#cfe9e0; }
+.book.bronze { background: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.35)), linear-gradient(90deg, #6d4a1f 0%, #95682b 8%, #4a2f12 100%); }
+.book.olive { background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.35)), linear-gradient(90deg, #4a4a20 0%, #6a6a2e 8%, #2f2f0e 100%); color:#ecdfb0; }
+
+.shelf {
+  background:
+    linear-gradient(180deg, #5e3a1c, #2a1808);
+  border-radius: 4px;
+  height: 14px;
+  box-shadow:
+    inset 0 2px 0 rgba(255,224,180,0.2),
+    inset 0 -2px 6px rgba(0,0,0,0.7),
+    0 6px 12px rgba(0,0,0,0.5);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #224b52; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #2f6068; }
+
+/* Subtle ambient glow on the body */
+body::before {
+  content: "";
+  position: fixed; inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 70% 10%, rgba(45,90,90,0.45), transparent 50%),
+    radial-gradient(ellipse at 20% 90%, rgba(20,40,42,0.6), transparent 55%);
+  z-index: -1;
+}
+
+/* Light mode: force readable dark text on stat tile values */
+[data-theme="light"] .stat-tile-value {
+  color: #14110b !important;
+  text-shadow: none !important;
+}
+
+[data-theme="light"] .ioc-type-chip {
+  background: #f1ead8 !important;
+  color: #14110b !important;
+  border-color: #d8cfba !important;
+}
+
+/* Command palette scroll area — themed scrollbar */
+.cmdk-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.cmdk-scroll::-webkit-scrollbar { width: 8px; }
+.cmdk-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.cmdk-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.cmdk-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--section-heading);
+  background-clip: padding-box;
+}

@@ -1,0 +1,14 @@
+title: Mimikatz Credential Dumping Indicators
+id: furix-0020-windows-mimikatz
+status: stable
+description: Mimikatz execution or LSASS credential dumping on a Windows host.
+logsource:
+  product: windows
+detection:
+  tool:
+    _raw|contains: 'mimikatz'
+  condition: tool
+level: critical
+tags:
+  - attack.credential-access
+  - attack.t1003.001

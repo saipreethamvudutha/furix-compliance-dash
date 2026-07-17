@@ -1,0 +1,17 @@
+title: AWS Console Login Without MFA
+id: furix-0012-cloudtrail-no-mfa
+status: stable
+description: Successful console login with MFA not used — weak access control.
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  login:
+    eventname: 'ConsoleLogin'
+  nomfa:
+    _raw|contains: '"MFAUsed":"No"'
+  condition: login and nomfa
+level: medium
+tags:
+  - attack.defense-evasion
+  - attack.t1078.004

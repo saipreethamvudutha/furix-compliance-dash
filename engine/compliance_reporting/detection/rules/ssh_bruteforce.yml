@@ -1,0 +1,14 @@
+title: SSH Brute Force Attempts
+id: furix-0002-ssh-bruteforce
+status: stable
+description: Multiple SSH authentication failures.
+logsource:
+  category: authentication
+detection:
+  failure:
+    _raw|contains: 'Failed password'
+  condition: failure
+level: medium
+tags:
+  - attack.credential-access
+  - attack.t1110

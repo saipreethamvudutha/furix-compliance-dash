@@ -1,0 +1,16 @@
+title: SSH Brute Force Followed by Successful Authentication
+id: furix-0001-ssh-bruteforce-success
+status: stable
+description: Repeated SSH auth failures on a host that also shows a success — a likely cracked credential.
+logsource:
+  category: authentication
+detection:
+  failure:
+    _raw|contains: 'Failed password'
+  success:
+    _raw|contains: 'Accepted password'
+  condition: failure and success
+level: high
+tags:
+  - attack.credential-access
+  - attack.t1110.001

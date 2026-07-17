@@ -1,0 +1,15 @@
+title: IAM User Created via CloudTrail
+id: furix-0010-cloudtrail-createuser
+status: stable
+description: A new IAM user was created — potential persistence backdoor.
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventname: 'CreateUser'
+  condition: selection
+level: high
+tags:
+  - attack.persistence
+  - attack.t1136.003

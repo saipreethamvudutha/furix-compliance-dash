@@ -1,0 +1,28 @@
+# Heavy runtime deps for the Furix engine + API. The compliance_reporting core,
+# scf_crosswalk, and log_generator are stdlib-only; these are needed by the full
+# pipeline (models, DB, LLM client) and the FastAPI server.
+#
+# torch is installed CPU-only in Dockerfile.api (see the --index-url there) to
+# avoid pulling CUDA wheels; on a GPU box, install the CUDA build instead.
+
+# API
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pydantic>=2
+
+# Database
+psycopg2-binary>=2.9
+pgvector>=0.3
+
+# LLM client (Gemma via Ollama's OpenAI-compatible endpoint)
+openai>=1.30
+
+# Models (embeddings + reranker)
+sentence-transformers>=3.0
+torch>=2.2
+
+# Ingestion / source parsing
+openpyxl>=3.1
+pdfplumber>=0.11
+numpy>=1.26

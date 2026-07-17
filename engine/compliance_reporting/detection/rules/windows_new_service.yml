@@ -1,0 +1,16 @@
+title: New Windows Service Installed
+id: furix-0021-windows-new-service
+status: stable
+description: EventID 7045 — a new service was installed, a common persistence mechanism.
+logsource:
+  product: windows
+detection:
+  selection:
+    _raw|contains|all:
+      - '7045'
+      - 'service'
+  condition: selection
+level: high
+tags:
+  - attack.persistence
+  - attack.t1543.003

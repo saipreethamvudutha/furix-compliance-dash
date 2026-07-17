@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+# engine runtime output
+engine/_report_store/
+engine/_demo_output/
+engine/_furix_output/
+# dashboard
+dashboard/node_modules/
+dashboard/.next/
+dashboard/tsconfig.tsbuildinfo
+# deploy
+deploy/.env
+deploy/source_data/*.json
+deploy/source_data/*.pdf
+# models
+*.safetensors

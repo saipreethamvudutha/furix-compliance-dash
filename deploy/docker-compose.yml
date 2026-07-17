@@ -1,0 +1,88 @@
+# Furix Compliance — full stack. Run from deploy/:  docker compose up -d
+# One-time data bootstrap is a separate runbook step (see deploy/RUNBOOK.md).
+name: furix-compliance
+
+services:
+  db:
+    build: ./db                     # Postgres 16 + Apache AGE + pgvector
+    environment:
+      POSTGRES_USER: ${PG_USER:-furix}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-postgres}
+      POSTGRES_DB: ${PG_DBNAME:-furix_compliance}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-furix} -d ${PG_DBNAME:-furix_compliance}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest     # serves Gemma (DLQ/unknown-format path only)
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+    # If Ollama already runs elsewhere, delete this service and point
+    # GEMMA_BASE_URL at that host in .env.
+
+  api:
+    build: ../engine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PG_HOST: db
+      PG_PORT: "5432"
+      PG_USER: ${PG_USER:-furix}
+      PG_PASSWORD: ${PG_PASSWORD:-postgres}
+      PG_DBNAME: ${PG_DBNAME:-furix_compliance}
+      PG_DBNAME_DET: ${PG_DBNAME_DET:-furix_det}
+      GEMMA_BASE_URL: ${GEMMA_BASE_URL:-http://ollama:11434/v1}
+      GEMMA_MODEL: ${GEMMA_MODEL:-gemma4:e4b}
+      FURIX_DEVICE: ${FURIX_DEVICE:-cpu}
+      FURIX_DATA_DIR: /data/source
+      FURIX_SCF_JSON: /data/source/scf-full-2026.2.json
+      FURIX_NIST_PDF: /data/source/NIST.CSWP.29.pdf
+      FURIX_CIS_PDF: /data/source/cis_controls_v8.1.pdf
+      FURIX_OUTPUT_DIR: /data/output
+      FURIX_REPORT_STORE: /data/reports
+      FURIX_CORS_ORIGINS: ${FURIX_CORS_ORIGINS:-http://localhost}
+    volumes:
+      - ./source_data:/data/source   # drop the SCF JSON + PDFs here (host side)
+      - furix_reports:/data/reports
+      - furix_output:/data/output
+      - hf_models:/models            # SecureBERT cache (persists across restarts)
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../dashboard
+      args:
+        NEXT_PUBLIC_API_URL: ""      # empty → browser calls same origin /api via nginx
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - web
+      - api
+    ports:
+      - "${FURIX_HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  ollama_models:
+  furix_reports:
+  furix_output:
+  hf_models:

@@ -1,0 +1,7 @@
+# API layer dependencies (the compliance ENGINE itself stays stdlib-only).
+# The heavy pipeline (torch, sentence-transformers, psycopg2, pgvector, openai)
+# is installed separately with the engine — see the engine's own requirements.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9   # required by FastAPI for file uploads (/api/ingest-file)
+pydantic>=2

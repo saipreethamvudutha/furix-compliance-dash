@@ -1,0 +1,41 @@
+# Packaging for the Furix compliance reporting engine.
+#
+# Zero runtime dependencies by design — the whole engine (reporting,
+# verification, persistence, diffing, the ATT&CK/Sigma detection pivot, and
+# alert delivery) runs on the Python standard library alone. This is a
+# deliberate durability property: no supply-chain surface on the critical path.
+#
+# Install (editable) from the compliance_reporting/ directory's parent:
+#   pip install -e .
+# Then:
+#   furix-compliance demo
+#   furix-compliance detect --log-type cloudtrail --file some.log
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "furix-compliance-reporting"
+version = "2.1.0"
+description = "Deterministic, self-verifying, multi-framework compliance reporting for the Furix pipeline"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "Furix Compliance Team" }]
+keywords = ["compliance", "cis", "nist", "hipaa", "pci-dss", "oscal", "sigma", "mitre-attack"]
+dependencies = []  # intentionally empty — stdlib only
+
+[project.optional-dependencies]
+# Optional accelerators; the engine never requires them.
+yaml = ["PyYAML>=6"]   # if present, could replace the bundled sigmayaml loader
+
+[project.scripts]
+furix-compliance = "compliance_reporting.__main__:main"
+
+[tool.setuptools]
+packages = ["compliance_reporting", "compliance_reporting.detection"]
+
+[tool.setuptools.package-data]
+"compliance_reporting" = ["crosswalk_snapshot.json"]
+"compliance_reporting.detection" = ["technique_map.json", "rules/*.yml", "fixtures/*.json"]
