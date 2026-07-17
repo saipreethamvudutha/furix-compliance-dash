@@ -53,12 +53,26 @@ export type ReportIndexEntry = {
   framework_pct: Record<string, number | null>;
 };
 
-// ── ingest ────────────────────────────────────────────────────────────────
-export function ingestLogs(text: string, logType = "auto"): Promise<IngestResult> {
-  return apiPost<IngestResult>("/api/ingest", { text, log_type: logType });
+// ── async ingest (background jobs) ──────────────────────────────────────────
+// Ingest endpoints return a job ref; poll getJob() until done, then read result.
+export type JobRef = { job_id: string };
+
+export type JobStatus = {
+  job_id: string;
+  status: "queued" | "running" | "done" | "error";
+  phase: string;
+  processed: number;
+  total: number;
+  percent: number;
+  error: string | null;
+  result: IngestResult | null;
+};
+
+export function ingestLogs(text: string, logType = "auto"): Promise<JobRef> {
+  return apiPost<JobRef>("/api/ingest", { text, log_type: logType });
 }
 
-export async function ingestFile(file: File, logType = "auto"): Promise<IngestResult> {
+export async function ingestFile(file: File, logType = "auto"): Promise<JobRef> {
   const form = new FormData();
   form.append("file", file);
   const res = await fetch(`${API_BASE}/api/ingest-file?log_type=${encodeURIComponent(logType)}`, {
@@ -75,19 +89,29 @@ export async function ingestFile(file: File, logType = "auto"): Promise<IngestRe
     }
     throw new Error(`ingest-file → ${res.status}: ${detail}`);
   }
-  return (await res.json()) as IngestResult;
+  return (await res.json()) as JobRef;
 }
 
-export function generateAndIngest(
-  count = 50,
-  attackRatio = 0.35,
-  seed = 0,
-): Promise<IngestResult> {
-  return apiPost<IngestResult>("/api/generate", {
-    count,
-    attack_ratio: attackRatio,
-    seed,
-  });
+export function generateAndIngest(count = 50, attackRatio = 0.35, seed = 0): Promise<JobRef> {
+  return apiPost<JobRef>("/api/generate", { count, attack_ratio: attackRatio, seed });
+}
+
+export function getJob(jobId: string): Promise<JobStatus> {
+  return apiGet<JobStatus>(`/api/jobs/${encodeURIComponent(jobId)}`);
+}
+
+/** Poll a job until it finishes, calling onProgress each tick. Resolves with the final status. */
+export async function pollJob(
+  jobId: string,
+  onProgress?: (job: JobStatus) => void,
+  intervalMs = 800,
+): Promise<JobStatus> {
+  for (;;) {
+    const job = await getJob(jobId);
+    onProgress?.(job);
+    if (job.status === "done" || job.status === "error") return job;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
 }
 
 // ── reads ─────────────────────────────────────────────────────────────────

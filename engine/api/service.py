@@ -62,10 +62,14 @@ def ingest_batch(
     analyzer: Analyzer | None = None,
     registry: FrameworkRegistry | None = None,
     deliver: bool = True,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Any]:
     """
     Run each log line through the analyzer, build + verify a report, persist it,
     and (if a prior report exists) diff + deliver regression alerts.
+
+    on_progress(processed, total, phase) is called during analysis and at each
+    finalization phase, for the background-job progress bar.
 
     Returns {report_id, summary, frameworks, verification, alerts}.
     Raises IngestError if the built report fails verification.
@@ -74,11 +78,15 @@ def ingest_batch(
     registry = registry or FrameworkRegistry.from_live()
 
     lines = split_log_lines(text)
-    results = [
-        {"log_type": log_type, "result": dict(analyzer(line, log_type))}
-        for line in lines
-    ]
+    total = len(lines)
+    results = []
+    for i, line in enumerate(lines):
+        results.append({"log_type": log_type, "result": dict(analyzer(line, log_type))})
+        if on_progress:
+            on_progress(i + 1, total, "analyzing")
 
+    if on_progress:
+        on_progress(total, total, "finalizing")
     report = build_report(results, registry=registry)
     verification = verify_report(report, results)
     if not verification.ok:
@@ -116,13 +124,14 @@ def generate_and_ingest(
     types: list[str] | None = None,
     analyzer: Analyzer | None = None,
     registry: FrameworkRegistry | None = None,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Any]:
     """Generate synthetic logs and ingest them (the dashboard 'Generate demo logs' path)."""
     from log_generator.generate import generate  # noqa: PLC0415
 
     lines = generate(count=count, attack_ratio=attack_ratio, types=types, seed=seed)
     return ingest_batch(store, "\n".join(lines), log_type="auto",
-                        analyzer=analyzer, registry=registry)
+                        analyzer=analyzer, registry=registry, on_progress=on_progress)
 
 
 def _deliver(alerts, report, prior_id) -> None:

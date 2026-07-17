@@ -6,7 +6,15 @@ import { FrameworkRings } from "@/components/compliance/framework-rings";
 import { ControlTable } from "@/components/compliance/control-table";
 import { VerificationBadge } from "@/components/compliance/verification-badge";
 import { severityColor } from "@/components/compliance/status";
-import { ingestLogs, ingestFile, generateAndIngest, type IngestResult } from "@/lib/data/furix-api";
+import {
+  ingestLogs,
+  ingestFile,
+  generateAndIngest,
+  pollJob,
+  type IngestResult,
+  type JobRef,
+  type JobStatus,
+} from "@/lib/data/furix-api";
 
 const LOG_TYPES = [
   "auto", "cloudtrail", "windows_evtx", "syslog", "okta_sso",
@@ -25,18 +33,26 @@ export default function IngestPage() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<IngestResult | null>(null);
   const [selected, setSelected] = useState<string>("cis");
+  const [progress, setProgress] = useState<JobStatus | null>(null);
 
-  async function run(fn: () => Promise<IngestResult>) {
+  async function run(submit: () => Promise<JobRef>) {
     setBusy(true);
     setError(null);
+    setResult(null);
+    setProgress(null);
     try {
-      const r = await fn();
-      setResult(r);
-      setSelected(r.frameworks[0]?.id ?? "cis");
+      const { job_id } = await submit();
+      const final = await pollJob(job_id, (j) => setProgress(j));
+      if (final.status === "error" || !final.result) {
+        throw new Error(final.error || "ingest failed");
+      }
+      setResult(final.result);
+      setSelected(final.result.frameworks[0]?.id ?? "cis");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -121,6 +137,25 @@ export default function IngestPage() {
             {text.trim() ? `${text.trim().split("\n").length} line(s)` : "no input"}
           </span>
         </div>
+
+        {busy && progress && (
+          <div className="mt-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+            <div className="mb-1.5 flex items-center justify-between text-xs">
+              <span className="font-medium capitalize">{progress.phase}…</span>
+              <span className="font-mono text-slate-500">
+                {progress.total > 0
+                  ? `${progress.processed.toLocaleString()} / ${progress.total.toLocaleString()} logs · ${progress.percent}%`
+                  : "starting…"}
+              </span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+              <div
+                className="h-full rounded-full bg-[var(--furix-accent,#c2703d)] transition-all duration-300"
+                style={{ width: `${Math.max(2, progress.percent)}%` }}
+              />
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="mt-3 flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-700 dark:text-rose-300">

@@ -23,9 +23,11 @@ from compliance_reporting.settings import Settings
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from . import service
+from .jobs import JobManager
 
 _settings = Settings.from_env()
 _store = ReportStore(_settings.store_path)
+_jobs = JobManager()
 
 app = FastAPI(title="Furix Compliance API", version=_settings.engine_version)
 
@@ -63,25 +65,45 @@ def health():
             "reports": len(_store.entries())}
 
 
-@app.post("/api/ingest")
+# ── async ingest: submit a background job, poll GET /api/jobs/{id} ─────────────
+@app.post("/api/ingest", status_code=202)
 def ingest(body: IngestBody):
     if not body.text.strip():
         raise HTTPException(status_code=400, detail="no log text provided")
-    return _handle(service.ingest_batch, _store, body.text, log_type=body.log_type)
+    text, lt = body.text, body.log_type
+    job_id = _jobs.submit(
+        lambda progress: service.ingest_batch(_store, text, log_type=lt, on_progress=progress)
+    )
+    return {"job_id": job_id}
 
 
-@app.post("/api/generate")
+@app.post("/api/generate", status_code=202)
 def generate(body: GenerateBody):
-    return _handle(service.generate_and_ingest, _store,
-                   count=body.count, attack_ratio=body.attack_ratio, seed=body.seed)
+    c, ar, sd = body.count, body.attack_ratio, body.seed
+    job_id = _jobs.submit(
+        lambda progress: service.generate_and_ingest(
+            _store, count=c, attack_ratio=ar, seed=sd, on_progress=progress)
+    )
+    return {"job_id": job_id}
 
 
-@app.post("/api/ingest-file")
+@app.post("/api/ingest-file", status_code=202)
 async def ingest_file(file: UploadFile, log_type: str = "auto"):
     raw = (await file.read()).decode("utf-8", errors="replace")
     if not raw.strip():
         raise HTTPException(status_code=400, detail="empty file")
-    return _handle(service.ingest_batch, _store, raw, log_type=log_type)
+    job_id = _jobs.submit(
+        lambda progress: service.ingest_batch(_store, raw, log_type=log_type, on_progress=progress)
+    )
+    return {"job_id": job_id}
+
+
+@app.get("/api/jobs/{job_id}")
+def job_status(job_id: str):
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"no such job {job_id}")
+    return job.to_dict()
 
 
 @app.get("/api/reports")
