@@ -34,10 +34,22 @@ def split_log_lines(text: str) -> list[str]:
 
 def _default_analyzer() -> Analyzer:
     """Lazy-import the heavy pipeline so importing this module stays cheap."""
+    import contextlib
+    import io
+    import os
+
     from pipeline import run_full_pipeline  # noqa: PLC0415 — heavy (torch + DB)
 
+    # The pipeline prints verbose per-log output (phase banners, mappings,
+    # timings). At bulk volume that stdout I/O dominates runtime and floods the
+    # container logs, so silence it unless FURIX_VERBOSE_INGEST=1.
+    verbose = os.environ.get("FURIX_VERBOSE_INGEST") == "1"
+
     def _run(raw: str, log_type: str) -> Mapping[str, Any]:
-        return run_full_pipeline(raw, log_type=log_type)
+        if verbose:
+            return run_full_pipeline(raw, log_type=log_type)
+        with contextlib.redirect_stdout(io.StringIO()):
+            return run_full_pipeline(raw, log_type=log_type)
 
     return _run
 
