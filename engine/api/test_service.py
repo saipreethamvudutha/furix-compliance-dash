@@ -127,6 +127,37 @@ def test_empty_ingest_is_valid_no_data_report():
     assert out["summary"]["total_violations"] == 0
 
 
+def test_verification_reports_named_level():
+    """FUR-CMP-003: the API states the achieved verification level; with a
+    stored batch that is ROLLUP_VERIFIED — never an overclaim about raw logs."""
+    store = _store()
+    out = service.ingest_batch(store, _ATTACK, analyzer=_stub_analyzer,
+                               registry=_REG, deliver=False)
+    assert out["verification"]["level"] == "ROLLUP_VERIFIED"
+
+
+def test_auto_ingest_routes_known_formats_deterministically():
+    """FUR-CMP-005 acceptance gate: with log_type='auto', recognised formats
+    are classified BEFORE analysis so the analyzer receives the concrete type
+    (never 'auto'), and only unrecognised lines fall back to 'generic'."""
+    seen: list[str] = []
+
+    def recording_analyzer(raw: str, log_type: str):
+        seen.append(log_type)
+        return _stub_analyzer(raw, log_type)
+
+    cloudtrail = ('{"eventVersion": "1.08", "eventSource": "iam.amazonaws.com", '
+                  '"eventName": "CreateUser", "awsRegion": "us-east-1"}')
+    syslog = "Jul  6 08:12:01 web01 sshd[4242]: Failed password for root from 10.0.0.5 port 22 ssh2"
+    mystery = "completely unrecognisable line ~~ 12345"
+    store = _store()
+    service.ingest_batch(store, "\n".join([cloudtrail, syslog, mystery]),
+                         analyzer=recording_analyzer, registry=_REG, deliver=False)
+    assert "auto" not in seen, "analyzer must never receive the 'auto' pseudo-type"
+    assert seen[0] == "cloudtrail" and seen[1] == "syslog"
+    assert seen[2] == "generic"  # unknown stays generic (deterministic unless FURIX_LLM_ENRICH=1)
+
+
 if __name__ == "__main__":
     import sys, traceback
     tests = [(n, f) for n, f in sorted(globals().items())

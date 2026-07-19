@@ -53,6 +53,7 @@ Rules implemented (14 total):
   POL-014  Lateral Movement Detected
 """
 
+import hashlib
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -92,7 +93,15 @@ _CIS_TO_HIPAA: dict = {
     "Control 17": "164.308",   # Administrative Safeguards — incident response
 }
 
-SCF_VERSION = "2026.1"
+# Single version source (FUR-CMP-017): never hardcode versions here.
+try:
+    from compliance_reporting.versions import SCF_VERSION
+except ImportError:  # standalone import without the reporting package on path
+    SCF_VERSION = "2026.2"
+
+# Namespace for deterministic finding identity (FUR-CMP-002): a finding's UUID
+# is derived from WHAT was found in WHICH log, never from when it was found.
+_FINDING_NAMESPACE = uuid.UUID("a3f1c2d4-5e6b-47a8-9c0d-1e2f3a4b5c6d")
 
 
 # ── PolicyFinding dataclass ───────────────────────────────────────────────────
@@ -815,6 +824,22 @@ def evaluate_policy(findings: dict, raw_log: str, is_benign: bool = False) -> tu
     if clean:
         print(f"  Controls with no violation : {clean}")
     print(sep)
+
+    # ── Deterministic identity (FUR-CMP-002) ─────────────────────────────────
+    # Re-running the same log through the same rule pack MUST produce the same
+    # finding UUIDs and timestamps, or reports stop being reproducible. The
+    # identity seed is the log content hash + rule + trigger; the timestamp is
+    # the log's own event time (content-derived) — never ingestion wall-clock.
+    log_sha = findings.get("log_sha256") or hashlib.sha256(
+        (raw_log or "").encode("utf-8", "replace")
+    ).hexdigest()
+    event_time = str(findings.get("timestamp") or "")
+    for pf in fired_findings:
+        pf.finding_uuid = str(uuid.uuid5(
+            _FINDING_NAMESPACE,
+            f"{log_sha}|{pf.rule_id}|{pf.triggered_field}|{pf.triggered_value}",
+        ))
+        pf.timestamp = event_time
 
     return (
         [pf.to_dict() for pf in fired_findings],

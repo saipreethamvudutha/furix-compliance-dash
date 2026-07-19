@@ -32,6 +32,20 @@ def split_log_lines(text: str) -> list[str]:
     return [ln.strip() for ln in text.splitlines() if ln.strip()]
 
 
+def classify_lines(lines: Sequence[str], declared: str = "auto") -> list[tuple[str, str]]:
+    """
+    Deterministic per-event type routing (FUR-CMP-005). When the caller
+    declares a concrete type it is honoured; "auto" runs each line through
+    detect_log_type() so every recognised format takes the deterministic
+    known-type path. Only genuinely unrecognised lines remain "generic"
+    (and even those stay deterministic unless FURIX_LLM_ENRICH=1).
+    """
+    if declared and declared != "auto":
+        return [(declared, ln) for ln in lines]
+    from log_ingest import detect_log_type  # noqa: PLC0415 — engine-root module
+    return [(detect_log_type(ln), ln) for ln in lines]
+
+
 def _default_analyzer() -> Analyzer:
     """Lazy-import the heavy pipeline so importing this module stays cheap."""
     import contextlib
@@ -77,11 +91,11 @@ def ingest_batch(
     analyzer = analyzer or _default_analyzer()
     registry = registry or FrameworkRegistry.from_live()
 
-    lines = split_log_lines(text)
-    total = len(lines)
+    typed_lines = classify_lines(split_log_lines(text), log_type)
+    total = len(typed_lines)
     results = []
-    for i, line in enumerate(lines):
-        results.append({"log_type": log_type, "result": dict(analyzer(line, log_type))})
+    for i, (detected_type, line) in enumerate(typed_lines):
+        results.append({"log_type": detected_type, "result": dict(analyzer(line, detected_type))})
         if on_progress:
             on_progress(i + 1, total, "analyzing")
 
@@ -107,10 +121,14 @@ def ingest_batch(
 
     return {
         "report_id": report["report_id"],
-        "lines_ingested": len(lines),
+        "lines_ingested": total,
         "summary": report_to_summary(report),
         "frameworks": report_to_frameworks(report),
-        "verification": {"ok": verification.ok, "checks_run": verification.checks_run},
+        "verification": {
+            "ok": verification.ok,
+            "level": verification.level,
+            "checks_run": verification.checks_run,
+        },
         "alerts": alerts,
     }
 

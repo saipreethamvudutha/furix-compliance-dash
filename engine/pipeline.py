@@ -34,7 +34,7 @@ from detection_engine import (
 )
 from retrieval_engine import retrieve_cis_controls_llm
 from models import embedder, reranker
-from policy_engine import evaluate_policy
+from policy_engine import SCF_VERSION, evaluate_policy
 from log_ingest import load_logs_from_file
 
 
@@ -220,6 +220,11 @@ def run_full_pipeline(raw_log: str, log_type: str = "auto") -> dict:
     _pipeline_start = time.perf_counter()
     phase_timings = {}
 
+    # Content identity of the raw event (FUR-CMP-002/007): the seed of the
+    # evidence lineage chain and of deterministic finding UUIDs downstream.
+    import hashlib as _hashlib
+    _log_sha256 = _hashlib.sha256(raw_log.encode("utf-8", "replace")).hexdigest()
+
     # ── Phase 0: Threat density assessment ───────────────────────────────────
     _t0 = time.perf_counter()
     try:
@@ -245,15 +250,19 @@ def run_full_pipeline(raw_log: str, log_type: str = "auto") -> dict:
 
     # ── Phase 1a–1c: Deterministic analysis (Phase 2 — Gemma off critical path) ──
     # enrich_with_llm=False: deterministic path only (all 25 known log types).
-    # enrich_with_llm=True:  only set by DLQ retry for unknown/unstructured formats.
+    # enrich_with_llm=True:  unknown/unstructured formats ONLY, and only when
+    #   FURIX_LLM_ENRICH=1 (FUR-CMP-005): LLM output is advisory enrichment and
+    #   must never be the default path — a deterministic verdict must not
+    #   depend on a probabilistic component unless explicitly opted in.
     _is_unknown_format = log_type.lower() in ("auto", "generic", "unknown")
+    _llm_enrich_enabled = os.environ.get("FURIX_LLM_ENRICH", "0") == "1"
     _t1 = time.perf_counter()
     try:
         llm_result = analyze_log_with_llm(
             raw_log,
             verbose=True,
             log_type=log_type,
-            enrich_with_llm=_is_unknown_format,
+            enrich_with_llm=_is_unknown_format and _llm_enrich_enabled,
         )
     except Exception as e:
         print(f"  [Phase 1 ERROR] Deterministic analysis failed: {e}")
@@ -345,6 +354,7 @@ def run_full_pipeline(raw_log: str, log_type: str = "auto") -> dict:
     # policy_summary:  metadata dict (rules evaluated, controls clean vs violated)
     _t6 = time.perf_counter()
     try:
+        findings["log_sha256"] = _log_sha256  # deterministic identity seed
         policy_findings, policy_summary = evaluate_policy(
         findings,
         raw_log,
@@ -357,7 +367,7 @@ def run_full_pipeline(raw_log: str, log_type: str = "auto") -> dict:
             "rules_evaluated": 0, "violations_found": 0,
             "rules_fired": [], "controls_violated": [],
             "controls_evaluated_clean": [], "log_severity": findings.get("severity", "unknown"),
-            "scf_version": "2026.1", "_error": str(e),
+            "scf_version": SCF_VERSION, "_error": str(e),
         }
     phase_timings["phase_3_policy_evaluation"] = round(time.perf_counter() - _t6, 4)
 
