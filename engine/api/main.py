@@ -147,6 +147,10 @@ class GenerateBody(BaseModel):
     seed: int = 0
 
 
+class ConfigBody(BaseModel):
+    snapshot: dict = {}
+
+
 # ── health (unauthenticated, minimal) ─────────────────────────────────────────
 @app.get("/api/health")
 def health():
@@ -199,6 +203,16 @@ async def ingest_file(file: UploadFile,
         owner=principal.key_id,
     )
     return {"job_id": job_id}
+
+
+@app.post("/api/ingest-config", status_code=201)
+def ingest_config(body: ConfigBody,
+                  principal: Principal = Depends(require(SCOPE_INGEST, "ingest_config"))):
+    """Ingest a config-posture snapshot → positive assertions → met controls."""
+    if not body.snapshot or not body.snapshot.get("resources"):
+        raise HTTPException(status_code=400, detail="snapshot has no resources")
+    store = _store_for(principal, None)
+    return _handle(service.ingest_config, store, body.snapshot, tenant=principal.tenant_id)
 
 
 @app.get("/api/jobs/{job_id}")

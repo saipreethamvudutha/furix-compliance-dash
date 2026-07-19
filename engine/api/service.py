@@ -74,6 +74,7 @@ def ingest_batch(
     *,
     log_type: str = "auto",
     tenant: str = "default",
+    config_snapshot: Any = None,
     analyzer: Analyzer | None = None,
     registry: FrameworkRegistry | None = None,
     deliver: bool = True,
@@ -115,7 +116,7 @@ def ingest_batch(
 
     if on_progress:
         on_progress(total, total, "finalizing")
-    report = build_report(results, registry=registry)
+    report = build_report(results, registry=registry, config_snapshot=config_snapshot)
     verification = verify_report(report, results)
     if not verification.ok:
         raise IngestError(f"report failed verification: {verification.failures}")
@@ -155,16 +156,69 @@ def generate_and_ingest(
     seed: int = 0,
     types: list[str] | None = None,
     tenant: str = "default",
+    with_config: bool = True,
     analyzer: Analyzer | None = None,
     registry: FrameworkRegistry | None = None,
     on_progress: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Any]:
-    """Generate synthetic logs and ingest them (the dashboard 'Generate demo logs' path)."""
+    """
+    Generate synthetic logs and ingest them (the dashboard 'Generate demo logs'
+    path). By default it also applies the demo config-posture snapshot so the
+    report shows positively-verified `met` controls and an earned compliance %,
+    not just detection findings.
+    """
     from log_generator.generate import generate  # noqa: PLC0415
+
+    snapshot = None
+    if with_config:
+        from compliance_reporting.fixtures import demo_config_snapshot  # noqa: PLC0415
+        snapshot = demo_config_snapshot()
 
     lines = generate(count=count, attack_ratio=attack_ratio, types=types, seed=seed)
     return ingest_batch(store, "\n".join(lines), log_type="auto", tenant=tenant,
-                        analyzer=analyzer, registry=registry, on_progress=on_progress)
+                        config_snapshot=snapshot, analyzer=analyzer, registry=registry,
+                        on_progress=on_progress)
+
+
+def ingest_config(
+    store: ReportStore,
+    snapshot: Mapping[str, Any],
+    *,
+    tenant: str = "default",
+    registry: FrameworkRegistry | None = None,
+    deliver: bool = True,
+) -> dict[str, Any]:
+    """
+    Ingest a config-posture snapshot (FUR-CMP-009). Combines it with the most
+    recent detection batch (if any) so posture reflects both event evidence and
+    config state, then builds + verifies + persists a report.
+    """
+    registry = registry or FrameworkRegistry.from_live()
+    prior = store.latest(1)
+    prior_id = prior[0].report_id if prior else None
+    batch = store.load_batch(prior_id) if prior_id else []
+
+    report = build_report(batch or [], registry=registry, config_snapshot=snapshot)
+    verification = verify_report(report, batch or [])
+    if not verification.ok:
+        raise IngestError(f"config report failed verification: {verification.failures}")
+
+    store.save(report, batch=batch or [])
+    alerts: list[dict[str, Any]] = []
+    if prior_id and prior_id != report["report_id"]:
+        d = diff_reports(store.load(prior_id), report)
+        alerts = alerts_from_diff(d)
+        if deliver and alerts:
+            _deliver(alerts, report, prior_id)
+    return {
+        "report_id": report["report_id"],
+        "config_assertions": report["summary"].get("config_assertions_total", 0),
+        "summary": report_to_summary(report),
+        "frameworks": report_to_frameworks(report),
+        "verification": {"ok": verification.ok, "level": verification.level,
+                         "checks_run": verification.checks_run},
+        "alerts": alerts,
+    }
 
 
 def _deliver(alerts, report, prior_id) -> None:

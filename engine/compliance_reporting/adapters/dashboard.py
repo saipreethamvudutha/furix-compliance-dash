@@ -67,10 +67,12 @@ def _slug(text: str) -> str:
 
 def _control_index(report: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     """
-    Build {control_id: {status, worst_severity, failing_tests, evidence[]}} by
-    joining report.controls with the evidence carried on report.tests.
+    Build {control_id: {status, worst_severity, failing_tests, evidence[],
+    config_pass[], config_fail[]}} by joining report.controls with the evidence
+    on report.tests and the config assertions on report.config_assertions.
     """
     tests_by_id = {t["test_id"]: t for t in report.get("tests", [])}
+    cfg_by_id = {r["spec_id"]: r for r in report.get("config_assertions", [])}
     index: dict[str, dict[str, Any]] = {}
     for c in report.get("controls", []):
         evidence: list[dict[str, Any]] = []
@@ -91,14 +93,46 @@ def _control_index(report: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
                     "sha256": ev.get("log_sha256", ""),
                     "evaluator_hash": evaluator_hash,
                 })
+        config_pass = [cfg_by_id[s] for s in c.get("config_passing", []) if s in cfg_by_id]
+        config_fail = [cfg_by_id[s] for s in c.get("config_failing", []) if s in cfg_by_id]
         index[c["control_id"]] = {
             "status": c["status"],
             "worst_severity": c.get("worst_severity", ""),
             "failing_tests": c.get("failing_tests", []),
             "evidence": evidence,
             "attack": c.get("attack", []),
+            "config_pass": config_pass,
+            "config_fail": config_fail,
         }
     return index
+
+
+def _config_evidence_for(via_controls: list[str], cidx: dict[str, dict[str, Any]],
+                         key: str) -> list[dict[str, str]]:
+    """Positive/negative config-assertion evidence rows for a requirement's controls."""
+    seen: set[str] = set()
+    out: list[dict[str, str]] = []
+    passing = key == "config_pass"
+    for ctrl in via_controls:
+        for res in cidx.get(ctrl, {}).get(key, []):
+            if res["spec_id"] in seen:
+                continue
+            seen.add(res["spec_id"])
+            pop = res.get("population", {})
+            row = {
+                "name": res.get("resource_type", res["spec_id"]),
+                "status": "met" if passing else "gap",
+                "detail": (f"{res['spec_id']} — {res['title']} "
+                           f"({pop.get('passing', 0)}/{pop.get('in_scope', 0)} resources)"),
+                "evidenceUri": f"furix-assertion://{res['spec_id']}",
+                "reproduce": (f"furix verify --assertion {res['spec_id']} "
+                              f"--evaluator {res.get('evaluator_hash','')[:12]} "
+                              f"--population {pop.get('observed',0)}/{pop.get('expected',0)}"),
+            }
+            out.append(row)
+            if len(out) >= _MAX_SYSTEMS:
+                return out
+    return out
 
 
 def _attack_for(via_controls: list[str], cidx: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
@@ -207,7 +241,14 @@ def _framework_to_dashboard(fw: Mapping[str, Any], report: Mapping[str, Any],
             "status": status,
             "monitoredControls": req.get("monitored_controls", 0),
             "totalMappedControls": req.get("total_controls", len(via)),
-            "systems": _systems_for(via, cidx) if status == "gap" else [],
+            "systems": (
+                # gap → detection + config-failure evidence;
+                # met → the positive config assertions that verified it.
+                (_systems_for(via, cidx) + _config_evidence_for(via, cidx, "config_fail"))[:_MAX_SYSTEMS]
+                if status == "gap"
+                else _config_evidence_for(via, cidx, "config_pass") if status == "met"
+                else []
+            ),
         }
         rec = _recommendation(via, cidx) if status == "gap" else None
         if rec:

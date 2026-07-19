@@ -125,6 +125,23 @@ def test_summary_carries_population_manifest():
     assert pop["reconciled"] is True
 
 
+def test_met_controls_carry_positive_config_evidence():
+    """Wave 2: with config posture, a met control shows the passing positive
+    assertion(s) that verified it — and the framework percentage is earned."""
+    from ..fixtures import demo_config_snapshot
+    report = build_report(demo_batch(), registry=_REGISTRY, generated_at=_GEN_AT,
+                          config_snapshot=demo_config_snapshot())
+    cis = next(f for f in report_to_frameworks(report) if f["id"] == "cis")
+    assert cis["metControls"] >= 2                     # Control 3 + 16
+    assert isinstance(cis["percentage"], int) and cis["percentage"] > 0  # earned, not null
+    by_ref = {c["reference"]: c for c in cis["controls"]}
+    c16 = by_ref["Control 16"]
+    assert c16["status"] == "met" and c16["systems"], "met control should carry positive evidence"
+    assert all(s["status"] == "met" for s in c16["systems"])
+    assert any("CFG-GH-" in s["detail"] for s in c16["systems"])
+    assert c16["systems"][0]["evidenceUri"].startswith("furix-assertion://")
+
+
 def test_met_and_na_rows_have_no_systems():
     for f in report_to_frameworks(_report()):
         for c in f["controls"]:
