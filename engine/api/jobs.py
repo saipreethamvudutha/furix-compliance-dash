@@ -35,6 +35,7 @@ class Job:
     total: int = 0
     result: dict | None = None
     error: str | None = None
+    owner: str | None = None        # key_id of the principal that submitted it
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -64,10 +65,10 @@ class JobManager:
         self._worker.start()
 
     # ── public ────────────────────────────────────────────────────────────────
-    def submit(self, work: WorkFn) -> str:
+    def submit(self, work: WorkFn, owner: str | None = None) -> str:
         job_id = uuid.uuid4().hex[:16]
         with self._lock:
-            self._jobs[job_id] = Job(id=job_id)
+            self._jobs[job_id] = Job(id=job_id, owner=owner)
             self._order.append(job_id)
             self._evict_locked()
         self._queue.put((job_id, work))
