@@ -32,13 +32,13 @@ wall-clock, so the store is reproducible and testable.
 from __future__ import annotations
 
 import json
-import os
+import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
-from typing import Any, Iterable
+from typing import Any
 
 _EVENT_NS = uuid.UUID("c1d2e3f4-a5b6-47c8-9d0e-1f2a3b4c5d6e")
 
@@ -143,28 +143,81 @@ def project(events: list[dict[str, Any]], *, as_of: str | None = None) -> dict[s
 
 
 class FindingStore:
-    """Event-sourced, append-only per-tenant finding lifecycle store."""
+    """
+    Event-sourced per-tenant finding lifecycle store, backed by SQLite
+    (FUR-OPS-002): transactional and safe across processes — the audit's fix for
+    the process-locked JSONL. The event model is unchanged; only the durable
+    substrate moved. WAL mode + a busy-timeout make concurrent access safe.
+    """
 
     def __init__(self, root: Path | str):
         self.root = Path(root)
-        self.path = self.root / "findings.jsonl"
         self.root.mkdir(parents=True, exist_ok=True)
+        self.path = self.root / "findings.db"
         self._lock = Lock()
+        self._conn = sqlite3.connect(str(self.path), timeout=30, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS finding_events (
+                   finding_id TEXT NOT NULL,
+                   seq INTEGER NOT NULL,
+                   action TEXT NOT NULL,
+                   from_state TEXT,
+                   to_state TEXT NOT NULL,
+                   actor TEXT NOT NULL,
+                   reason TEXT,
+                   occurred_at TEXT NOT NULL,
+                   payload TEXT,
+                   event_id TEXT NOT NULL,
+                   PRIMARY KEY (finding_id, seq)
+               )"""
+        )
+        self._conn.commit()
+        self._migrate_legacy_jsonl()
+
+    def _migrate_legacy_jsonl(self) -> None:
+        """One-time import of a pre-Wave-E findings.jsonl, if present."""
+        legacy = self.root / "findings.jsonl"
+        if not legacy.exists():
+            return
+        rows = [json.loads(ln) for ln in legacy.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        with self._lock, self._conn:
+            for r in rows:
+                self._insert_locked(r)
+        legacy.rename(legacy.with_suffix(".jsonl.migrated"))
 
     # ── low level ──────────────────────────────────────────────────────────────
-    def _all_events(self) -> list[dict[str, Any]]:
-        if not self.path.exists():
-            return []
-        return [json.loads(ln) for ln in self.path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    def _row_to_event(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "finding_id": row["finding_id"], "seq": row["seq"], "action": row["action"],
+            "from_state": row["from_state"], "to_state": row["to_state"], "actor": row["actor"],
+            "reason": row["reason"], "occurred_at": row["occurred_at"],
+            "payload": json.loads(row["payload"]) if row["payload"] else {},
+            "event_id": row["event_id"],
+        }
 
     def _events_for(self, finding_id: str) -> list[dict[str, Any]]:
-        return [e for e in self._all_events() if e["finding_id"] == finding_id]
+        rows = self._conn.execute(
+            "SELECT * FROM finding_events WHERE finding_id=? ORDER BY seq", (finding_id,)
+        ).fetchall()
+        return [self._row_to_event(r) for r in rows]
+
+    def _insert_locked(self, rec: dict[str, Any]) -> None:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO finding_events "
+            "(finding_id, seq, action, from_state, to_state, actor, reason, occurred_at, payload, event_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (rec["finding_id"], rec["seq"], rec["action"], rec["from_state"], rec["to_state"],
+             rec["actor"], rec["reason"], rec["occurred_at"],
+             json.dumps(rec.get("payload") or {}, sort_keys=True), rec["event_id"]),
+        )
 
     def _append(self, event: FindingEvent) -> dict[str, Any]:
         rec = event.to_dict()
-        with self._lock:
-            with open(self.path, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(rec, sort_keys=True) + "\n")
+        with self._lock, self._conn:
+            self._insert_locked(rec)
         return rec
 
     # ── public API ─────────────────────────────────────────────────────────────
@@ -225,8 +278,12 @@ class FindingStore:
         return sorted(self._events_for(finding_id), key=lambda e: e["seq"])
 
     def list(self, *, as_of: str | None = None, open_only: bool = False) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM finding_events ORDER BY finding_id, seq"
+        ).fetchall()
         by_id: dict[str, list[dict[str, Any]]] = {}
-        for e in self._all_events():
+        for r in rows:
+            e = self._row_to_event(r)
             by_id.setdefault(e["finding_id"], []).append(e)
         out = [project(evs, as_of=as_of) for evs in by_id.values()]
         if open_only:

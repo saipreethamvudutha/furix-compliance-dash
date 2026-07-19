@@ -74,8 +74,18 @@ class ConfigSnapshot:
     def observed_count(self, resource_type: str) -> int:
         return sum(1 for r in self.resources if r.resource_type == resource_type)
 
+    def has_expected(self, resource_type: str) -> bool:
+        """Did the collector DECLARE how many resources of this type it expected?"""
+        return resource_type in self.expected_counts
+
     def expected_count(self, resource_type: str) -> int:
-        return int(self.expected_counts.get(resource_type, self.observed_count(resource_type)))
+        """
+        The declared expected population. When the collector did NOT declare it,
+        return 0 and let `has_expected` drive the assertion to UNKNOWN — an
+        undeclared population must never assume "observed == complete" (the P1
+        the audit flagged: incomplete collection appearing complete).
+        """
+        return int(self.expected_counts.get(resource_type, 0))
 
 
 def parse_snapshot(raw: Mapping[str, Any]) -> ConfigSnapshot:

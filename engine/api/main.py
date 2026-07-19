@@ -37,6 +37,11 @@ from .auth import (
 from .jobs import JobManager
 from .tenancy import TenantStores
 
+# Fail-closed production readiness (addresses the audit's "silent optional"
+# P0/P1s): in production a weak posture refuses to boot rather than serving.
+from .preflight import run as _preflight  # noqa: E402
+_preflight()
+
 _settings = Settings.from_env()
 _auth = AuthRegistry.from_env()
 _stores = TenantStores(_settings.store_path)

@@ -29,6 +29,7 @@ MODULES = [
     "api.test_jobs",
     "api.test_auth",
     "api.test_durable",
+    "api.test_preflight",
 ]
 
 

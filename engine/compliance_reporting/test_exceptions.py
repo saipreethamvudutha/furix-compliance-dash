@@ -147,6 +147,20 @@ def test_list_and_open_only_filter():
     assert "f1" in open_ids and "f2" not in open_ids   # closed f2 excluded
 
 
+def test_findings_persist_across_store_reopen():
+    """FUR-OPS-002: SQLite-backed store survives a fresh process/connection."""
+    import tempfile
+    root = tempfile.mkdtemp(prefix="furix_find_dur_")
+    s1 = FindingStore(root)
+    _open(s1, "fx")
+    s1.transition("fx", "start", actor="a", occurred_at="t1", reason="triage")
+    # a brand-new store object on the same directory (simulates a restart)
+    s2 = FindingStore(root)
+    f = s2.get("fx")
+    assert f["state"] == IN_PROGRESS and f["events"] == 2
+    assert len(s2.history("fx")) == 2
+
+
 def test_reopen_after_close():
     s = _store()
     _open(s)

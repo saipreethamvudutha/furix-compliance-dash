@@ -70,11 +70,20 @@ class AesGcmCipher:
         return self._AESGCM(key).decrypt(nonce, ct, aad)
 
 
-def default_cipher() -> Cipher:
-    """AES-GCM when available, else the honest passthrough."""
+def default_cipher(*, require: bool = False) -> Cipher:
+    """
+    AES-GCM when available, else the honest passthrough. With require=True (the
+    production path when a master key is configured) a missing cipher library
+    raises instead of silently downgrading to plaintext — the audit's P1 fix.
+    """
     try:
         return AesGcmCipher()
-    except Exception:
+    except Exception as e:
+        if require:
+            raise RuntimeError(
+                "evidence encryption requested but `cryptography` is unavailable — "
+                "install it (pip install cryptography) or unset FURIX_EVIDENCE_MASTER_KEY"
+            ) from e
         return NoneCipher()
 
 
@@ -116,7 +125,8 @@ class EvidenceSealer:
 
     def __init__(self, keyring: KeyRing | None = None, cipher: Cipher | None = None):
         self.keyring = keyring
-        self.cipher = cipher or (default_cipher() if keyring else NoneCipher())
+        # When a key is configured we REQUIRE a real cipher (no silent plaintext).
+        self.cipher = cipher or (default_cipher(require=bool(keyring)) if keyring else NoneCipher())
 
     @property
     def enabled(self) -> bool:

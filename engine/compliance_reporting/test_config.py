@@ -55,6 +55,29 @@ def test_incomplete_population_is_unknown_not_pass():
     assert r["status"] == "unknown" and r["status_reason"] == "incomplete_population"
 
 
+def test_undeclared_population_is_unknown_never_pass():
+    """P1 fix: a collector that did NOT declare expected_counts can never make
+    an assertion PASS — incomplete collection can't masquerade as complete."""
+    raw = demo_config_snapshot()
+    del raw["expected_counts"]["okta_app"]   # undeclared → unverified population
+    r = {x["spec_id"]: x for x in evaluate(parse_snapshot(raw))}["CFG-IDP-MFA-EXTERNAL"]
+    assert r["status"] == "unknown" and r["status_reason"] == "population_unverified"
+    assert r["population"]["population_verified"] is False
+
+
+def test_evaluator_hash_covers_the_actual_predicate_logic():
+    """P0 fix: opposing predicates must NOT collide on the evaluator hash."""
+    from .config_assertions import ConfigAssertionSpec
+    base = dict(spec_id="X", title="t", resource_type="rt", control_edges=("Control 1",),
+                severity="high", applies_clause={"op": "always"}, rationale="r")
+    a = ConfigAssertionSpec(predicate_clause={"op": "truthy", "attr": "enabled"}, **base)
+    b = ConfigAssertionSpec(predicate_clause={"op": "falsy", "attr": "enabled"}, **base)
+    c = ConfigAssertionSpec(predicate_clause={"op": "gte", "attr": "n", "value": 90}, **base)
+    d = ConfigAssertionSpec(predicate_clause={"op": "gte", "attr": "n", "value": 30}, **base)
+    hashes = {a.evaluator_hash(), b.evaluator_hash(), c.evaluator_hash(), d.evaluator_hash()}
+    assert len(hashes) == 4, "opposing/parameterised predicates must hash differently"
+
+
 def test_violation_makes_assertion_fail():
     r = {x["spec_id"]: x for x in evaluate(parse_snapshot(demo_config_snapshot_with_gap()))}
     assert r["CFG-GH-BRANCH-PROTECTION"]["status"] == "fail"
