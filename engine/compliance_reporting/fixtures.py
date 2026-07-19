@@ -217,3 +217,52 @@ def demo_batch_remediated() -> list[dict[str, Any]]:
         {"log_type": "cloudtrail", "result": cloudtrail_clean, "elapsed_sec": 1.55},
         {"log_type": "benign_network", "result": benign, "elapsed_sec": 0.91},
     ]
+
+
+def demo_config_snapshot() -> dict[str, Any]:
+    """
+    A config-posture snapshot (Wave 2) that positively demonstrates controls.
+    Combined with demo_batch(): Control 3 (public buckets blocked) and Control
+    16 (GitHub protections) become COMPLIANT — the first controls a positive
+    assertion can legitimately turn green — while Controls 5 & 6 stay at_risk
+    because real detection findings outrank a clean config.
+    """
+    def _r(rid, rtype, **attrs):
+        return {"resource_id": rid, "resource_type": rtype,
+                "observed_at": "2026-07-14T08:00:00+00:00", "attributes": attrs}
+
+    return {
+        "source": "furix-demo",
+        "collected_at": "2026-07-14T08:00:00+00:00",
+        "boundary": "prod",
+        "expected_counts": {
+            "okta_app": 2, "okta_user": 3, "aws_account": 1,
+            "aws_access_key": 2, "aws_s3_bucket": 2, "github_repo": 2,
+        },
+        "resources": [
+            _r("app-portal", "okta_app", internet_facing=True, mfa_enforced=True),
+            _r("app-admin", "okta_app", internet_facing=True, mfa_enforced=True),
+            _r("u-admin", "okta_user", is_admin=True, mfa_enrolled=True, status="active", days_since_login=2),
+            _r("u-alice", "okta_user", is_admin=False, mfa_enrolled=True, status="active", days_since_login=5),
+            _r("u-bob", "okta_user", is_admin=False, mfa_enrolled=True, status="active", days_since_login=11),
+            _r("aws-root", "aws_account", root_mfa_enabled=True),
+            _r("key-ci", "aws_access_key", status="active", age_days=30),
+            _r("key-deploy", "aws_access_key", status="active", age_days=44),
+            _r("bucket-app", "aws_s3_bucket", public_access_blocked=True),
+            _r("bucket-logs", "aws_s3_bucket", public_access_blocked=True),
+            _r("repo-api", "github_repo", default_branch="main", branch_protected=True,
+               required_reviews=2, secret_scanning=True),
+            _r("repo-web", "github_repo", default_branch="main", branch_protected=True,
+               required_reviews=1, secret_scanning=True),
+        ],
+    }
+
+
+def demo_config_snapshot_with_gap() -> dict[str, Any]:
+    """Same snapshot but one repo has branch protection OFF — CFG-GH-BRANCH-
+    PROTECTION FAILs, so Control 16 flips COMPLIANT → at_risk. For the FAIL path."""
+    snap = demo_config_snapshot()
+    for r in snap["resources"]:
+        if r["resource_id"] == "repo-web":
+            r["attributes"]["branch_protected"] = False
+    return snap

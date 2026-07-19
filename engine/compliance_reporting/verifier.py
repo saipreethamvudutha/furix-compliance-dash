@@ -96,10 +96,16 @@ class VerificationResult:
 
 
 # ── independent recomputation (kept intentionally naive) ─────────────────────
-def _recompute_from_batch(batch: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+def _recompute_from_batch(
+    batch: Iterable[Mapping[str, Any]],
+    config_results: list[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     """
     Second implementation of the rollup: plain loops, no shared helpers with
-    report_builder beyond batch normalisation and the static catalogs.
+    report_builder beyond batch normalisation and the static catalogs. Control
+    status combines detection outcomes (from the batch) with config-assertion
+    outcomes (from the report) — the same combination report_builder does, but
+    reimplemented independently.
     """
     entries = normalize_batch(batch)
     ok_entries = [e for e in entries if not is_failed_result(e["result"])]
@@ -119,13 +125,27 @@ def _recompute_from_batch(batch: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     # Detection-only semantics: fired → fail, else unknown. NEVER pass.
     test_status = {t: ("fail" if n else "unknown") for t, n in fired.items()}
 
+    # config-assertion outcomes grouped per control
+    cfg: dict[str, dict[str, list]] = {}
+    for res in (config_results or []):
+        bucket = {"pass": "passing", "fail": "failing"}.get(res.get("status"), "unknown")
+        for cid in res.get("control_ids", []):
+            slot = cfg.setdefault(cid, {"passing": [], "failing": [], "unknown": []})
+            slot[bucket].append(res.get("spec_id"))
+
     control_status: dict[str, str] = {}
     for ctrl in CONTROL_CATALOG:
         mapped = TESTS_BY_CONTROL[ctrl]
-        if not mapped:
+        c = cfg.get(ctrl, {"passing": [], "failing": [], "unknown": []})
+        monitored = bool(mapped) or bool(c["passing"] or c["failing"] or c["unknown"])
+        any_failing = any(test_status[t] == "fail" for t in mapped) or bool(c["failing"])
+        any_pass = bool(c["passing"])  # detection has no positive pass
+        if not monitored:
             control_status[ctrl] = "not_monitored"
-        elif any(test_status[t] == "fail" for t in mapped):
+        elif any_failing:
             control_status[ctrl] = "at_risk"
+        elif any_pass and not c["unknown"]:
+            control_status[ctrl] = "compliant"
         else:
             control_status[ctrl] = "unknown"
 
@@ -190,16 +210,23 @@ def _verify_structure(v: VerificationResult, report: Mapping[str, Any]) -> bool:
             v.check("GATE-NO-PASS", t["status"] != "pass",
                     f"{t['test_id']} claims 'pass' but is a detection-only rule "
                     "with no positive predicate")
-    # No control may claim "compliant" unless every mapped test passed.
+    # No control may claim "compliant" without a positive assertion that
+    # passed (config-posture) or all mapped detection tests passing — AND no
+    # failing assertion of either kind. Silence alone can never be compliant.
     tests_by_id = {t["test_id"]: t for t in tests}
     for c in controls:
         if c["status"] == "compliant":
             mapped = TESTS_BY_CONTROL.get(c["control_id"], ())
-            all_pass = bool(mapped) and all(
+            det_all_pass = bool(mapped) and all(
                 tests_by_id[t]["status"] == "pass" for t in mapped if t in tests_by_id
             )
-            v.check("GATE-NO-COMPLIANT", all_pass,
-                    f"{c['control_id']} claims 'compliant' without all mapped tests passing")
+            cfg_passing = bool(c.get("config_passing"))
+            no_failures = not c.get("config_failing") and not c.get("failing_tests")
+            no_incomplete = not c.get("config_unknown")
+            v.check("GATE-NO-COMPLIANT",
+                    (cfg_passing or det_all_pass) and no_failures and no_incomplete,
+                    f"{c['control_id']} claims 'compliant' without a passing positive "
+                    "assertion and a clean, complete population")
     # No requirement may outrank its contributors (silence never promotes).
     ctrl_status_map = {c["control_id"]: c["status"] for c in controls}
     for fw in frameworks:
@@ -246,10 +273,11 @@ def _verify_structure(v: VerificationResult, report: Mapping[str, Any]) -> bool:
 
 
 def _verify_rollup(
-    v: VerificationResult, report: Mapping[str, Any], batch: Iterable[Mapping[str, Any]]
+    v: VerificationResult, report: Mapping[str, Any], batch: Iterable[Mapping[str, Any]],
+    config_results: list[Mapping[str, Any]] | None = None,
 ) -> None:
     """RECOMP + CONS checks — requires the stored batch."""
-    truth = _recompute_from_batch(batch)
+    truth = _recompute_from_batch(batch, config_results)
     tests, controls, frameworks = report["tests"], report["controls"], report["frameworks"]
 
     b = report["batch"]
@@ -345,6 +373,27 @@ def _verify_rollup(
     v.check("CONS-UNKNOWN",
             set(s["controls_unknown"]) == {c for c, st in truth["control_status"].items() if st == "unknown"},
             "summary.controls_unknown does not match recomputed unknown set")
+    v.check("CONS-COMPLIANT",
+            set(s.get("controls_compliant", [])) == {c for c, st in truth["control_status"].items() if st == "compliant"},
+            "summary.controls_compliant does not match recomputed compliant set")
+
+    # ── CFG: config assertions reconcile against their catalog ─────────────────
+    from .config_assertions import CONFIG_ASSERTION_CATALOG  # local import
+    for res in report.get("config_assertions", []):
+        spec = CONFIG_ASSERTION_CATALOG.get(res["spec_id"])
+        v.check("CFG-SPEC", spec is not None, f"unknown config assertion {res.get('spec_id')}")
+        if spec is not None:
+            v.check("CFG-HASH", res["evaluator_hash"] == spec.evaluator_hash(),
+                    f"{res['spec_id']} evaluator_hash does not match the spec")
+        pop = res.get("population", {})
+        v.check("CFG-POP",
+                pop.get("passing", 0) + pop.get("failing", 0) == pop.get("in_scope", 0),
+                f"{res.get('spec_id')} population passing+failing != in_scope")
+        # a PASS is only legal on a complete population with no failures
+        if res.get("status") == "pass":
+            v.check("CFG-PASS-GATE",
+                    pop.get("reconciled") and pop.get("failing", 0) == 0 and pop.get("in_scope", 0) > 0,
+                    f"{res['spec_id']} claims pass without a clean, complete population")
 
 
 # ── public API ────────────────────────────────────────────────────────────────
@@ -374,7 +423,7 @@ def verify_report(
     # Run every applicable check family even after failures: a tampered report
     # should yield the FULL diagnostic picture, not just the first mismatch.
     if batch is not None:
-        _verify_rollup(v, report, batch)
+        _verify_rollup(v, report, batch, report.get("config_assertions", []))
 
     if not v.ok:
         v.level = LEVEL_NOT_VERIFIED

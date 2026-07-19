@@ -1,0 +1,158 @@
+"""
+test_config.py
+==============
+Positive config-posture assertions (Wave 2, FUR-CMP-008/009): connectors,
+the assertion catalog + evaluator, and the report merge that lets a control
+legitimately reach `compliant` with an earned compliance %.
+
+    python3 -m compliance_reporting.test_config
+"""
+
+from __future__ import annotations
+
+import copy
+
+from .config_assertions import CONFIG_ASSERTION_CATALOG, evaluate
+from .connectors import parse_snapshot
+from .fixtures import demo_batch, demo_config_snapshot, demo_config_snapshot_with_gap
+from .registry import FrameworkRegistry
+from .report_builder import build_report
+from .verifier import verify_report
+
+_REG = FrameworkRegistry.from_snapshot()
+_GEN_AT = "2026-07-19T12:00:00+00:00"
+
+
+def _snap():
+    return parse_snapshot(demo_config_snapshot())
+
+
+# ── connectors ────────────────────────────────────────────────────────────────
+def test_snapshot_parses_and_reconciles_population():
+    s = _snap()
+    assert s.observed_count("okta_app") == 2 == s.expected_count("okta_app")
+    assert s.observed_count("github_repo") == 2
+    assert {r.resource_type for r in s.resources} == {
+        "okta_app", "okta_user", "aws_account", "aws_access_key",
+        "aws_s3_bucket", "github_repo",
+    }
+
+
+# ── evaluator ─────────────────────────────────────────────────────────────────
+def test_all_assertions_pass_on_clean_snapshot():
+    results = {r["spec_id"]: r for r in evaluate(_snap())}
+    assert len(results) == len(CONFIG_ASSERTION_CATALOG)
+    for r in results.values():
+        assert r["status"] == "pass", (r["spec_id"], r["status_reason"])
+        assert r["population"]["reconciled"] and r["population"]["failing"] == 0
+
+
+def test_incomplete_population_is_unknown_not_pass():
+    raw = demo_config_snapshot()
+    raw["expected_counts"]["okta_app"] = 5   # expected 5, only 2 observed
+    r = {x["spec_id"]: x for x in evaluate(parse_snapshot(raw))}["CFG-IDP-MFA-EXTERNAL"]
+    assert r["status"] == "unknown" and r["status_reason"] == "incomplete_population"
+
+
+def test_violation_makes_assertion_fail():
+    r = {x["spec_id"]: x for x in evaluate(parse_snapshot(demo_config_snapshot_with_gap()))}
+    assert r["CFG-GH-BRANCH-PROTECTION"]["status"] == "fail"
+    assert r["CFG-GH-BRANCH-PROTECTION"]["population"]["failing"] == 1
+    # the other GitHub assertions still pass
+    assert r["CFG-GH-SECRET-SCANNING"]["status"] == "pass"
+
+
+def test_evaluator_hash_is_stable():
+    a = {r["spec_id"]: r["evaluator_hash"] for r in evaluate(_snap())}
+    b = {r["spec_id"]: r["evaluator_hash"] for r in evaluate(_snap())}
+    assert a == b
+    assert a["CFG-IDP-MFA-EXTERNAL"] != a["CFG-AWS-ROOT-MFA"]
+
+
+# ── report merge: controls can now be compliant ──────────────────────────────
+def test_positive_pass_makes_control_compliant():
+    r = build_report(demo_batch(), registry=_REG, generated_at=_GEN_AT,
+                     config_snapshot=demo_config_snapshot())
+    by_id = {c["control_id"]: c for c in r["controls"]}
+    # Control 3 (public buckets blocked) and Control 16 (GitHub) → compliant
+    assert by_id["Control 3"]["status"] == "compliant"
+    assert by_id["Control 16"]["status"] == "compliant"
+    assert by_id["Control 3"]["config_passing"]
+    # detection failures still outrank a clean config
+    assert by_id["Control 5"]["status"] == "at_risk"
+    assert by_id["Control 6"]["status"] == "at_risk"
+
+
+def test_compliance_pct_is_now_earned_not_null():
+    r = build_report(demo_batch(), registry=_REG, generated_at=_GEN_AT,
+                     config_snapshot=demo_config_snapshot())
+    cis = next(f for f in r["frameworks"] if f["framework_id"] == "cis_v8")
+    assert cis["requirements_compliant"] >= 2       # Controls 3 + 16
+    assert cis["compliance_pct"] is not None and cis["compliance_pct"] > 0
+    assert r["summary"]["config_assertions_passed"] == len(CONFIG_ASSERTION_CATALOG)
+
+
+def test_config_failure_flips_control_to_at_risk():
+    r = build_report(demo_batch(), registry=_REG, generated_at=_GEN_AT,
+                     config_snapshot=demo_config_snapshot_with_gap())
+    by_id = {c["control_id"]: c for c in r["controls"]}
+    assert by_id["Control 16"]["status"] == "at_risk"   # branch protection off
+    assert "CFG-GH-BRANCH-PROTECTION" in by_id["Control 16"]["config_failing"]
+
+
+def test_no_config_snapshot_preserves_detection_only_behaviour():
+    r = build_report(demo_batch(), registry=_REG, generated_at=_GEN_AT)
+    assert r["config_assertions"] == []
+    for c in r["controls"]:
+        assert c["status"] != "compliant"              # no positive assertions → none met
+
+
+# ── verification holds with config assertions ─────────────────────────────────
+def test_verifier_accepts_report_with_config():
+    r = build_report(demo_batch(), registry=_REG, generated_at=_GEN_AT,
+                     config_snapshot=demo_config_snapshot())
+    res = verify_report(r, demo_batch())
+    assert res.ok, res.summary()
+
+
+def test_verifier_rejects_forged_config_pass():
+    r = build_report(demo_batch(), registry=_REG, generated_at=_GEN_AT,
+                     config_snapshot=demo_config_snapshot_with_gap())
+    bad = copy.deepcopy(r)
+    # forge the failing branch-protection assertion into a pass
+    for res in bad["config_assertions"]:
+        if res["spec_id"] == "CFG-GH-BRANCH-PROTECTION":
+            res["status"] = "pass"
+    out = verify_report(bad, demo_batch())
+    assert not out.ok
+    assert any(c in ("CFG-PASS-GATE", "RECOMP-CTRL-S", "HASH-CONTENT")
+               for c, _ in out.failures)
+
+
+def test_determinism_with_config():
+    from .report_builder import canonical_json
+    a = build_report(demo_batch(), registry=_REG, generated_at=_GEN_AT,
+                     config_snapshot=demo_config_snapshot())
+    b = build_report(demo_batch(), registry=_REG, generated_at=_GEN_AT,
+                     config_snapshot=demo_config_snapshot())
+    assert a["report_id"] == b["report_id"]
+    assert canonical_json(a) == canonical_json(b)
+
+
+if __name__ == "__main__":
+    import sys
+    import traceback
+
+    tests = [(n, f) for n, f in sorted(globals().items())
+             if n.startswith("test_") and callable(f)]
+    failed = 0
+    for name, fn in tests:
+        try:
+            fn()
+            print(f"  PASS  {name}")
+        except Exception:
+            failed += 1
+            print(f"  FAIL  {name}")
+            traceback.print_exc()
+    print(f"\n{len(tests) - failed}/{len(tests)} config tests passed")
+    sys.exit(1 if failed else 0)

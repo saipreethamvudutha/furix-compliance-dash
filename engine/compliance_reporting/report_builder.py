@@ -224,11 +224,26 @@ def _attack_by_control(entries: list[dict[str, Any]]) -> dict[str, list[dict[str
     }
 
 
+def _config_by_control(config_results: list[dict[str, Any]]) -> dict[str, dict[str, list[str]]]:
+    """Group config-assertion outcomes per CIS control."""
+    by_ctrl: dict[str, dict[str, list[str]]] = {}
+    for res in config_results:
+        bucket = {"pass": "passing", "fail": "failing"}.get(res["status"], "unknown")
+        for cid in res["control_ids"]:
+            slot = by_ctrl.setdefault(cid, {"passing": [], "failing": [], "unknown": []})
+            slot[bucket].append(res["spec_id"])
+    return by_ctrl
+
+
 def _build_controls(
-    tests: list[dict[str, Any]], entries: list[dict[str, Any]]
+    tests: list[dict[str, Any]],
+    entries: list[dict[str, Any]],
+    config_results: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     tests_by_id = {t["test_id"]: t for t in tests}
     attack_by_control = _attack_by_control(entries)
+    config_by_control = _config_by_control(config_results or [])
+    config_specs = {r["spec_id"]: r for r in (config_results or [])}
 
     # How often did detection map each control, independent of rule firing?
     observation_counts: dict[str, int] = {c: 0 for c in CONTROL_CATALOG}
@@ -244,35 +259,54 @@ def _build_controls(
     controls: list[dict[str, Any]] = []
     for control_id, title in CONTROL_CATALOG.items():
         mapped_test_ids = TESTS_BY_CONTROL[control_id]
-        failing = [t for t in mapped_test_ids if tests_by_id[t]["status"] == STATUS_FAIL]
-        unknown = [t for t in mapped_test_ids if tests_by_id[t]["status"] == STATUS_UNKNOWN]
-        passing = [t for t in mapped_test_ids if tests_by_id[t]["status"] == STATUS_PASS]
+        cfg = config_by_control.get(control_id, {"passing": [], "failing": [], "unknown": []})
 
-        if not mapped_test_ids:
+        det_failing = [t for t in mapped_test_ids if tests_by_id[t]["status"] == STATUS_FAIL]
+        det_unknown = [t for t in mapped_test_ids if tests_by_id[t]["status"] == STATUS_UNKNOWN]
+        det_passing = [t for t in mapped_test_ids if tests_by_id[t]["status"] == STATUS_PASS]
+        cfg_failing, cfg_passing, cfg_unknown = cfg["failing"], cfg["passing"], cfg["unknown"]
+
+        monitored = bool(mapped_test_ids) or bool(cfg_failing or cfg_passing or cfg_unknown)
+        any_failing = bool(det_failing or cfg_failing)
+        any_positive_pass = bool(det_passing or cfg_passing)
+
+        if not monitored:
             status = CTRL_NOT_MONITORED
-        elif failing:
+        elif any_failing:
             status = CTRL_AT_RISK
-        elif passing and not unknown:
-            status = CTRL_COMPLIANT  # unreachable until positive assertions exist
+        elif any_positive_pass and not cfg_unknown:
+            # Positively demonstrated: ≥1 assertion verified the control is in
+            # place, nothing failed, and config population is complete. This is
+            # the ONLY path to `compliant`. Detection silence does NOT block it
+            # (no attack observed is the normal good state), but an incomplete
+            # config population (cfg_unknown) does.
+            status = CTRL_COMPLIANT
         else:
             status = CTRL_UNKNOWN
 
         worst = ""
-        if failing:
-            worst = max(
-                (tests_by_id[t]["severity"] for t in failing), key=severity_rank
-            )
+        sevs = [tests_by_id[t]["severity"] for t in det_failing]
+        sevs += [config_specs[s]["severity"] for s in cfg_failing if s in config_specs]
+        if sevs:
+            worst = max(sevs, key=severity_rank)
+
+        evidence_mode = "config+detection" if (cfg and mapped_test_ids) else (
+            "config" if cfg_failing or cfg_passing or cfg_unknown else
+            ("detection_only" if mapped_test_ids else "none"))
 
         controls.append(
             {
                 "control_id": control_id,
                 "title": title,
                 "status": status,
-                "evidence_mode": "detection_only" if mapped_test_ids else "none",
-                "failing_tests": failing,
-                "unknown_tests": unknown,
-                "passing_tests": passing,
-                "violation_count": sum(tests_by_id[t]["occurrences"] for t in failing),
+                "evidence_mode": evidence_mode,
+                "failing_tests": det_failing,
+                "unknown_tests": det_unknown,
+                "passing_tests": det_passing,
+                "config_passing": cfg_passing,
+                "config_failing": cfg_failing,
+                "config_unknown": cfg_unknown,
+                "violation_count": sum(tests_by_id[t]["occurrences"] for t in det_failing),
                 "worst_severity": worst,
                 "observation_count": observation_counts[control_id],
                 "attack": attack_by_control.get(control_id, []),
@@ -385,6 +419,7 @@ def build_report(
     registry: FrameworkRegistry | None = None,
     generated_at: str | None = None,
     engine_version: str = ENGINE_VERSION,
+    config_snapshot: Any = None,
 ) -> dict[str, Any]:
     """
     Build the canonical compliance report for one batch of pipeline results.
@@ -416,9 +451,17 @@ def build_report(
         s for s in (e["result"].get("_run_timestamp") for e in successes) if s
     )
 
+    # Positive config-posture assertions (Wave 2): the only path to `compliant`.
+    config_results: list[dict[str, Any]] = []
+    if config_snapshot is not None:
+        from .config_assertions import evaluate as _eval_config  # local import
+        from .connectors import ConfigSnapshot, parse_snapshot
+        snap = config_snapshot if isinstance(config_snapshot, ConfigSnapshot) else parse_snapshot(config_snapshot)
+        config_results = _eval_config(snap)
+
     evidence = _evidence_items(entries)
     tests = _build_tests(evidence, logs_evaluated=len(successes))
-    controls = _build_controls(tests, entries)
+    controls = _build_controls(tests, entries, config_results)
     frameworks = _build_frameworks(controls, registry)
 
     violations_by_severity: dict[str, int] = {}
@@ -452,6 +495,9 @@ def build_report(
             "tests_passed": sum(1 for t in tests if t["status"] == STATUS_PASS),
             "total_violations": len(evidence),
             "violations_by_severity": dict(sorted(violations_by_severity.items())),
+            "controls_compliant": sorted(
+                c["control_id"] for c in controls if c["status"] == CTRL_COMPLIANT
+            ),
             "controls_at_risk": sorted(
                 c["control_id"] for c in controls if c["status"] == CTRL_AT_RISK
             ),
@@ -461,8 +507,12 @@ def build_report(
             "controls_not_monitored": sorted(
                 c["control_id"] for c in controls if c["status"] == CTRL_NOT_MONITORED
             ),
+            "config_assertions_total": len(config_results),
+            "config_assertions_passed": sum(1 for r in config_results if r["status"] == "pass"),
+            "config_assertions_failed": sum(1 for r in config_results if r["status"] == "fail"),
         },
         "tests": tests,
+        "config_assertions": config_results,
         "controls": controls,
         "frameworks": frameworks,
     }
