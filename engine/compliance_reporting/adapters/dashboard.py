@@ -8,24 +8,32 @@ Target TypeScript shapes (exact keys):
 
     ComplianceFramework {
       id, name, shortName,
-      totalControls, metControls, inProgressControls, gapControls, naControls,
-      percentage, controls: ComplianceControl[]
+      totalControls, metControls, inProgressControls, gapControls,
+      unknownControls, notMonitoredControls, naControls,
+      coveragePct, atRiskPct, percentage (number | null),
+      controls: ComplianceControl[]
     }
     ComplianceControl {
       id, reference, title, description, plainLanguage,
-      status: "met" | "in_progress" | "gap" | "not_applicable",
+      status: "met" | "in_progress" | "gap" | "unknown"
+            | "not_monitored" | "not_applicable",
+      monitoredControls, totalMappedControls,
       systems: { name, status, detail }[],
       aiRecommendation?
     }
 
-Status mapping (our rollup → dashboard):
-    compliant      → met
+Status mapping (our rollup → dashboard) — honest and one-to-one (FUR-CMP-006):
+    compliant      → met            (requires positive assertions; none exist yet)
     at_risk        → gap
-    not_monitored  → not_applicable   (honest: no rule assesses it; excluded from %)
+    unknown        → unknown        (monitored, no violations observed — NOT met)
+    not_monitored  → not_monitored  (never disguised as not_applicable: N/A
+                                     requires an approved applicability
+                                     decision, which does not exist here)
 
 Every dashboard row (a framework requirement) is backed by the report's own
 control→test→evidence chain, so `systems` and `aiRecommendation` are real,
-deterministic, and traceable — never invented.
+deterministic, and traceable — never invented. Posture is a tuple (state
+counts + coverage + at-risk share), never a lone percentage.
 """
 
 from __future__ import annotations
@@ -35,7 +43,12 @@ from typing import Any, Mapping
 from ..registry import CONTROL_CATALOG
 
 # our framework rollup status → dashboard ControlStatus
-_STATUS_MAP = {"compliant": "met", "at_risk": "gap", "not_monitored": "not_applicable"}
+_STATUS_MAP = {
+    "compliant": "met",
+    "at_risk": "gap",
+    "unknown": "unknown",
+    "not_monitored": "not_monitored",
+}
 
 # framework_id → (dashboard id, full name, short name)
 _FRAMEWORK_META = {
@@ -148,8 +161,13 @@ def _plain_language(status: str, via_controls: list[str], violations: int) -> st
     if status == "gap":
         return f"At risk — {violations} violation(s) across {', '.join(via_controls) or 'mapped controls'}."
     if status == "met":
-        return "Satisfied by monitored controls with no violations this batch."
-    return "Not assessed by log-based monitoring (no policy rule covers this yet)."
+        return "All mapped assertions positively passed for the expected population."
+    if status == "unknown":
+        return (
+            "Monitored — no violations observed in this batch. Detection "
+            "evidence alone cannot prove the control operates."
+        )
+    return "Not monitored — no detection rule covers this requirement yet."
 
 
 def _framework_to_dashboard(fw: Mapping[str, Any], report: Mapping[str, Any],
@@ -158,9 +176,10 @@ def _framework_to_dashboard(fw: Mapping[str, Any], report: Mapping[str, Any],
     dash_id, name, short = _FRAMEWORK_META.get(fid, (fid, fw.get("name", fid), fid))
 
     controls: list[dict[str, Any]] = []
-    counts = {"met": 0, "in_progress": 0, "gap": 0, "not_applicable": 0}
+    counts = {"met": 0, "in_progress": 0, "gap": 0, "unknown": 0,
+              "not_monitored": 0, "not_applicable": 0}
     for req in fw.get("requirements", []):
-        status = _STATUS_MAP.get(req["status"], "not_applicable")
+        status = _STATUS_MAP.get(req["status"], "unknown")
         counts[status] += 1
         via = req.get("via_controls", [])
         violations = sum(cidx.get(c, {}).get("evidence", []).__len__() for c in via)
@@ -171,6 +190,8 @@ def _framework_to_dashboard(fw: Mapping[str, Any], report: Mapping[str, Any],
             "description": f"{name} requirement {req['requirement_id']}, mapped via {', '.join(via) or 'no control'}.",
             "plainLanguage": _plain_language(status, via, violations),
             "status": status,
+            "monitoredControls": req.get("monitored_controls", 0),
+            "totalMappedControls": req.get("total_controls", len(via)),
             "systems": _systems_for(via, cidx) if status == "gap" else [],
         }
         rec = _recommendation(via, cidx) if status == "gap" else None
@@ -181,7 +202,7 @@ def _framework_to_dashboard(fw: Mapping[str, Any], report: Mapping[str, Any],
             row["attack"] = attack
         controls.append(row)
 
-    pct = fw.get("compliance_pct")
+    compliance_pct = fw.get("compliance_pct")
     return {
         "id": dash_id,
         "name": name,
@@ -190,8 +211,18 @@ def _framework_to_dashboard(fw: Mapping[str, Any], report: Mapping[str, Any],
         "metControls": counts["met"],
         "inProgressControls": counts["in_progress"],
         "gapControls": counts["gap"],
+        "unknownControls": counts["unknown"],
+        "notMonitoredControls": counts["not_monitored"],
         "naControls": counts["not_applicable"],
-        "percentage": round(pct) if isinstance(pct, (int, float)) else 0,
+        "coveragePct": round(fw.get("coverage_pct") or 0.0),
+        "atRiskPct": (
+            round(fw["at_risk_pct"]) if isinstance(fw.get("at_risk_pct"), (int, float)) else None
+        ),
+        # A compliance percentage requires positive assertions — null until
+        # then, NEVER 0 (reads as "0% compliant") or a silent 100.
+        "percentage": (
+            round(compliance_pct) if isinstance(compliance_pct, (int, float)) else None
+        ),
         "controls": controls,
     }
 
@@ -215,9 +246,13 @@ def report_to_summary(report: Mapping[str, Any]) -> dict[str, Any]:
         "total_violations": s.get("total_violations", 0),
         "frameworks": [
             {"id": f["id"], "name": f["name"], "shortName": f["shortName"],
-             "percentage": f["percentage"], "gapControls": f["gapControls"],
+             "percentage": f["percentage"], "coveragePct": f["coveragePct"],
+             "atRiskPct": f["atRiskPct"], "gapControls": f["gapControls"],
+             "unknownControls": f["unknownControls"],
+             "notMonitoredControls": f["notMonitoredControls"],
              "totalControls": f["totalControls"]}
             for f in frameworks
         ],
+        "versions": report.get("versions", {}),
         "integrity_sha256": report.get("integrity", {}).get("content_sha256", ""),
     }

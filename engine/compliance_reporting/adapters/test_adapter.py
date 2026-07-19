@@ -20,10 +20,13 @@ _GEN_AT = "2026-07-16T12:00:00+00:00"
 
 _FRAMEWORK_KEYS = {
     "id", "name", "shortName", "totalControls", "metControls",
-    "inProgressControls", "gapControls", "naControls", "percentage", "controls",
+    "inProgressControls", "gapControls", "unknownControls",
+    "notMonitoredControls", "naControls", "coveragePct", "atRiskPct",
+    "percentage", "controls",
 }
-_CONTROL_KEYS = {"id", "reference", "title", "description", "plainLanguage", "status", "systems"}
-_CONTROL_STATUS = {"met", "in_progress", "gap", "not_applicable"}
+_CONTROL_KEYS = {"id", "reference", "title", "description", "plainLanguage",
+                 "status", "monitoredControls", "totalMappedControls", "systems"}
+_CONTROL_STATUS = {"met", "in_progress", "gap", "unknown", "not_monitored", "not_applicable"}
 
 
 def _report():
@@ -37,7 +40,10 @@ def test_frameworks_have_exact_shape():
     assert ids == {"cis", "nist", "hipaa", "pci"}
     for f in fws:
         assert _FRAMEWORK_KEYS <= set(f), f"missing keys: {_FRAMEWORK_KEYS - set(f)}"
-        assert isinstance(f["percentage"], int)
+        # no positive assertions exist → percentage must be None (never 0/100)
+        assert f["percentage"] is None
+        assert isinstance(f["coveragePct"], int)
+        assert f["atRiskPct"] is None or isinstance(f["atRiskPct"], int)
 
 
 def test_controls_have_exact_shape_and_valid_status():
@@ -54,7 +60,8 @@ def test_counts_reconcile():
     for f in report_to_frameworks(_report()):
         assert (
             f["totalControls"]
-            == f["metControls"] + f["inProgressControls"] + f["gapControls"] + f["naControls"]
+            == f["metControls"] + f["inProgressControls"] + f["gapControls"]
+            + f["unknownControls"] + f["notMonitoredControls"] + f["naControls"]
             == len(f["controls"])
         )
 
@@ -63,13 +70,17 @@ def test_status_mapping_matches_report():
     report = _report()
     fw_by_id = {f["framework_id"]: f for f in report["frameworks"]}
     dash_by_id = {f["id"]: f for f in report_to_frameworks(report)}
-    # CIS: compliant→met, at_risk→gap, not_monitored→not_applicable
+    # CIS: at_risk→gap, unknown→unknown, not_monitored→not_monitored — honest,
+    # one-to-one; not_monitored is NEVER disguised as not_applicable
     cis_report = fw_by_id["cis_v8"]
     cis_dash = dash_by_id["cis"]
     assert cis_dash["gapControls"] == cis_report["requirements_at_risk"]
-    assert cis_dash["metControls"] == cis_report["requirements_compliant"]
-    assert cis_dash["naControls"] == cis_report["requirements_not_monitored"]
-    assert cis_dash["percentage"] == round(cis_report["compliance_pct"])
+    assert cis_dash["metControls"] == cis_report["requirements_compliant"] == 0
+    assert cis_dash["unknownControls"] == cis_report["requirements_unknown"]
+    assert cis_dash["notMonitoredControls"] == cis_report["requirements_not_monitored"]
+    assert cis_dash["naControls"] == 0  # no approved applicability decisions exist
+    assert cis_dash["percentage"] is None
+    assert cis_dash["coveragePct"] == round(cis_report["coverage_pct"])
 
 
 def test_cis_controls_use_real_titles():
