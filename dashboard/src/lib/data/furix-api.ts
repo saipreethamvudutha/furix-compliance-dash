@@ -19,6 +19,16 @@ export type FrameworkKpi = {
   totalControls: number;
 };
 
+export type PopulationManifest = {
+  expected: number;
+  observed: number;
+  errored: number;
+  excluded: number;
+  duplicate: number;
+  coverage_pct: number;
+  reconciled: boolean;
+};
+
 export type ReportSummary = {
   report_id: string;
   generated_at: string;
@@ -26,6 +36,7 @@ export type ReportSummary = {
   successful_logs: number;
   failed_logs: number;
   total_violations: number;
+  population?: PopulationManifest;
   frameworks: FrameworkKpi[];
   versions?: Record<string, string>;
   integrity_sha256: string;

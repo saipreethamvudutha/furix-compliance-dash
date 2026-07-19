@@ -76,8 +76,25 @@ export default function LiveCompliancePage() {
       {!loading && !error && frameworks && selectedFw && (
         <div className="space-y-5">
           {summary && (
-            <div className="text-sm text-slate-500">
-              {summary.total_logs} log(s) analysed · {summary.total_violations} violation(s) ·{" "}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-500">
+              <span>
+                {summary.total_logs} log(s) analysed · {summary.total_violations} violation(s)
+              </span>
+              {summary.population && (
+                <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-2 py-0.5 text-xs dark:border-slate-700">
+                  <span className="font-medium">Source completeness</span>
+                  <span className="font-mono">
+                    {summary.population.observed}/{summary.population.expected} observed
+                    {summary.population.errored > 0 && ` · ${summary.population.errored} errored`}
+                  </span>
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      summary.population.reconciled ? "bg-emerald-500" : "bg-amber-500"
+                    }`}
+                    title={summary.population.reconciled ? "population reconciled" : "population does not reconcile"}
+                  />
+                </span>
+              )}
               <span className="font-mono text-xs">{summary.report_id.slice(0, 8)}</span>
             </div>
           )}

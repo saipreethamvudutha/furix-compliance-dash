@@ -233,9 +233,29 @@ export interface ComplianceControl {
   /** contributing CIS controls actually monitored / total mapped (coverage) */
   monitoredControls?: number;
   totalMappedControls?: number;
-  systems: { name: string; status: ControlStatus; detail: string }[];
+  systems: EvidenceRow[];
   aiRecommendation?: string;
   attack?: AttackRef[];
+}
+
+export interface EvidenceRow {
+  name: string;
+  status: ControlStatus;
+  detail: string;
+  /** resolvable pointer into the immutable evidence store (FUR-CMP-007) */
+  evidenceUri?: string;
+  /** copyable command to reproduce this verdict from raw evidence */
+  reproduce?: string;
+}
+
+export interface PopulationManifest {
+  expected: number;
+  observed: number;
+  errored: number;
+  excluded: number;
+  duplicate: number;
+  coverage_pct: number;
+  reconciled: boolean;
 }
 
 export interface AIPerformance {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Sparkles, Crosshair } from "lucide-react";
+import { ChevronDown, ChevronRight, Sparkles, Crosshair, Link as LinkIcon, Terminal } from "lucide-react";
 import type { ComplianceControl, ComplianceFramework } from "@/lib/data/types";
 import { StatusPill } from "./status";
 
@@ -71,13 +71,27 @@ function ControlRow({ control }: { control: ComplianceControl }) {
           {control.systems.length > 0 && (
             <div>
               <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                Evidence ({control.systems.length})
+                Evidence lineage ({control.systems.length})
               </div>
-              <ul className="space-y-1">
+              <ul className="space-y-2">
                 {control.systems.map((s, i) => (
-                  <li key={i} className="flex gap-2 font-mono text-xs text-slate-600 dark:text-slate-300">
-                    <span className="shrink-0 text-slate-400">{s.name}</span>
-                    <span className="break-all">{s.detail}</span>
+                  <li key={i} className="rounded-md border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
+                    <div className="flex gap-2 font-mono text-xs text-slate-600 dark:text-slate-300">
+                      <span className="shrink-0 text-slate-400">{s.name}</span>
+                      <span className="break-all">{s.detail}</span>
+                    </div>
+                    {s.evidenceUri && (
+                      <div className="mt-1 flex items-center gap-1.5 font-mono text-[10px] text-emerald-600 dark:text-emerald-400">
+                        <LinkIcon className="h-3 w-3 shrink-0" />
+                        <span className="break-all">{s.evidenceUri}</span>
+                      </div>
+                    )}
+                    {s.reproduce && (
+                      <div className="mt-1 flex items-center gap-1.5 rounded bg-slate-100 px-1.5 py-1 font-mono text-[10px] text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                        <Terminal className="h-3 w-3 shrink-0" />
+                        <span className="break-all">{s.reproduce}</span>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
