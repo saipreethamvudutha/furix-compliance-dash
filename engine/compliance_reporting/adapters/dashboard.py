@@ -219,8 +219,27 @@ def _plain_language(status: str, via_controls: list[str], violations: int) -> st
     return "Not monitored — no detection rule covers this requirement yet."
 
 
+def _finding_chip(via: list[str], findings: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The remediation/exception status for an at-risk requirement, if any."""
+    if not findings:
+        return None
+    for ctrl in via:
+        f = findings.get(ctrl)
+        if f:
+            return {
+                "state": f.get("state"),
+                "owner": f.get("owner"),
+                "dueDate": f.get("due_date"),
+                "expired": bool(f.get("expired")),
+                "exception": f.get("exception"),
+                "findingId": f.get("finding_id"),
+            }
+    return None
+
+
 def _framework_to_dashboard(fw: Mapping[str, Any], report: Mapping[str, Any],
-                            cidx: dict[str, dict[str, Any]]) -> dict[str, Any]:
+                            cidx: dict[str, dict[str, Any]],
+                            findings: Mapping[str, Any] | None = None) -> dict[str, Any]:
     fid = fw["framework_id"]
     dash_id, name, short = _FRAMEWORK_META.get(fid, (fid, fw.get("name", fid), fid))
 
@@ -256,6 +275,10 @@ def _framework_to_dashboard(fw: Mapping[str, Any], report: Mapping[str, Any],
         attack = _attack_for(via, cidx)
         if attack:
             row["attack"] = attack
+        if status == "gap":
+            chip = _finding_chip(via, findings)
+            if chip:
+                row["finding"] = chip
         controls.append(row)
 
     compliance_pct = fw.get("compliance_pct")
@@ -283,10 +306,15 @@ def _framework_to_dashboard(fw: Mapping[str, Any], report: Mapping[str, Any],
     }
 
 
-def report_to_frameworks(report: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Map a canonical report to the dashboard's `ComplianceFramework[]`."""
+def report_to_frameworks(report: Mapping[str, Any],
+                         findings: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+    """
+    Map a canonical report to the dashboard's `ComplianceFramework[]`. When a
+    `findings` map (control_id → open finding) is supplied, at-risk rows are
+    annotated with their remediation/exception status (Wave 5).
+    """
     cidx = _control_index(report)
-    return [_framework_to_dashboard(fw, report, cidx) for fw in report.get("frameworks", [])]
+    return [_framework_to_dashboard(fw, report, cidx, findings) for fw in report.get("frameworks", [])]
 
 
 def report_to_summary(report: Mapping[str, Any]) -> dict[str, Any]:

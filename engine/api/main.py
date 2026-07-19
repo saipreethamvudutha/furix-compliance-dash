@@ -30,7 +30,10 @@ from compliance_reporting.render_html import render_html_report
 from compliance_reporting.settings import Settings
 
 from . import service
-from .auth import AuthError, AuthRegistry, ForbiddenError, Principal, SCOPE_INGEST, SCOPE_READ
+from .auth import (
+    AuthError, AuthRegistry, ForbiddenError, Principal,
+    SCOPE_ADMIN, SCOPE_EXPORT, SCOPE_INGEST, SCOPE_READ,
+)
 from .jobs import JobManager
 from .tenancy import TenantStores
 
@@ -259,6 +262,62 @@ def summary(principal: Principal = Depends(require(SCOPE_READ, "summary")),
 def trend(principal: Principal = Depends(require(SCOPE_READ, "trend")),
           tenant: str | None = None):
     return service.get_trend(_store_for(principal, tenant))
+
+
+# ── finding / exception lifecycle (Wave 5) ────────────────────────────────────
+class TransitionBody(BaseModel):
+    action: str
+    reason: str = ""
+    occurred_at: str
+    payload: dict = {}
+
+
+@app.post("/api/findings/derive", status_code=201)
+def derive_findings(occurred_at: str,
+                    principal: Principal = Depends(require(SCOPE_INGEST, "derive_findings")),
+                    report: str = "latest"):
+    store = _store_for(principal, None)
+    return _handle(service.derive_findings, store, report, tenant=principal.tenant_id,
+                   actor=principal.key_id, occurred_at=occurred_at)
+
+
+@app.get("/api/findings")
+def findings(principal: Principal = Depends(require(SCOPE_READ, "list_findings")),
+             tenant: str | None = None, as_of: str | None = None, open_only: bool = False):
+    return service.list_findings(_store_for(principal, tenant), as_of=as_of, open_only=open_only)
+
+
+@app.get("/api/findings/{finding_id}/history")
+def finding_history(finding_id: str,
+                    principal: Principal = Depends(require(SCOPE_READ, "finding_history")),
+                    tenant: str | None = None):
+    return service.finding_history(_store_for(principal, tenant), finding_id)
+
+
+@app.post("/api/findings/{finding_id}/transition")
+def transition_finding(finding_id: str, body: TransitionBody,
+                       principal: Principal = Depends(require(SCOPE_INGEST, "transition_finding"))):
+    # Risk acceptance is an approval authority — require the admin scope.
+    if body.action == "accept_risk" and not principal.has(SCOPE_ADMIN):
+        raise HTTPException(status_code=403, detail="risk acceptance requires approver (admin) authority")
+    store = _store_for(principal, None)
+    return _handle(service.transition_finding, store, finding_id, body.action,
+                   actor=principal.key_id, occurred_at=body.occurred_at,
+                   reason=body.reason, payload=body.payload)
+
+
+# ── OSCAL + auditor workspace (Wave 5) ────────────────────────────────────────
+@app.get("/api/oscal")
+def oscal(principal: Principal = Depends(require(SCOPE_EXPORT, "oscal")),
+          report: str = "latest", kind: str = "assessment-results",
+          as_of: str | None = None, tenant: str | None = None):
+    return _handle(service.get_oscal, _store_for(principal, tenant), report, kind=kind, as_of=as_of)
+
+
+@app.get("/api/audit/export")
+def audit_export(principal: Principal = Depends(require(SCOPE_EXPORT, "audit_export")),
+                 report: str = "latest", as_of: str | None = None, tenant: str | None = None):
+    return _handle(service.get_audit_package, _store_for(principal, tenant), report, as_of=as_of)
 
 
 @app.get("/api/diff")

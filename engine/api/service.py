@@ -235,6 +235,69 @@ def ingest_config(
     }
 
 
+# ── finding / exception lifecycle (Wave 5) ────────────────────────────────────
+def _finding_store(store: ReportStore):
+    from compliance_reporting.exceptions import FindingStore  # noqa: PLC0415
+    return FindingStore(store.root)
+
+
+def derive_findings(store: ReportStore, report_id: str = "latest", *, tenant: str = "default",
+                    actor: str = "system", occurred_at: str) -> dict[str, Any]:
+    """
+    Open a Finding for every at-risk control in a report (idempotent). This is
+    how the assurance verdict feeds the remediation workflow.
+    """
+    from compliance_reporting.exceptions import new_finding_id  # noqa: PLC0415
+    report = store.load(_resolve(store, report_id))
+    fs = _finding_store(store)
+    ctrl_sev = {c["control_id"]: c.get("worst_severity", "medium") for c in report["controls"]}
+    opened = 0
+    for c in report["controls"]:
+        if c["status"] != "at_risk":
+            continue
+        fid = new_finding_id(tenant, c["control_id"], "cis_v8", report["report_id"])
+        before = fs.get(fid)
+        fs.open_finding(fid, control_id=c["control_id"], framework_id="cis_v8",
+                        severity=ctrl_sev.get(c["control_id"], "medium"), actor=actor,
+                        occurred_at=occurred_at, discovered_report=report["report_id"],
+                        reason=f"{c['control_id']} at risk")
+        if not before:
+            opened += 1
+    return {"report_id": report["report_id"], "opened": opened,
+            "open_findings": len(fs.list(open_only=True))}
+
+
+def list_findings(store: ReportStore, *, as_of: str | None = None,
+                  open_only: bool = False) -> list[dict[str, Any]]:
+    return _finding_store(store).list(as_of=as_of, open_only=open_only)
+
+
+def finding_history(store: ReportStore, finding_id: str) -> list[dict[str, Any]]:
+    return _finding_store(store).history(finding_id)
+
+
+def transition_finding(store: ReportStore, finding_id: str, action: str, *, actor: str,
+                       occurred_at: str, reason: str = "",
+                       payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    from compliance_reporting.exceptions import LifecycleError  # noqa: PLC0415
+    try:
+        return _finding_store(store).transition(
+            finding_id, action, actor=actor, occurred_at=occurred_at,
+            reason=reason, payload=payload)
+    except LifecycleError as e:
+        raise IngestError(str(e))
+
+
+def findings_by_control(store: ReportStore, *, as_of: str | None = None) -> dict[str, dict[str, Any]]:
+    """control_id → its most-relevant open finding, for annotating the report."""
+    out: dict[str, dict[str, Any]] = {}
+    for f in _finding_store(store).list(as_of=as_of, open_only=True):
+        cid = f.get("control_id")
+        if cid and cid not in out:
+            out[cid] = f
+    return out
+
+
 def _deliver(alerts, report, prior_id) -> None:
     try:
         from compliance_reporting.settings import Settings
@@ -271,8 +334,11 @@ def get_report(store: ReportStore, report_id: str) -> dict[str, Any]:
     return store.load(_resolve(store, report_id))
 
 
-def get_frameworks(store: ReportStore, report_id: str = "latest") -> list[dict[str, Any]]:
-    return report_to_frameworks(store.load(_resolve(store, report_id)))
+def get_frameworks(store: ReportStore, report_id: str = "latest",
+                   as_of: str | None = None) -> list[dict[str, Any]]:
+    # annotate at-risk rows with any open finding / accepted-exception status
+    fbc = findings_by_control(store, as_of=as_of)
+    return report_to_frameworks(store.load(_resolve(store, report_id)), fbc or None)
 
 
 def get_summary(store: ReportStore, report_id: str = "latest") -> dict[str, Any]:
@@ -281,6 +347,46 @@ def get_summary(store: ReportStore, report_id: str = "latest") -> dict[str, Any]
 
 def get_trend(store: ReportStore) -> list[dict[str, Any]]:
     return store.trend()
+
+
+# ── OSCAL + auditor export (Wave 5) ───────────────────────────────────────────
+def get_oscal(store: ReportStore, report_id: str = "latest", *, kind: str = "assessment-results",
+              as_of: str | None = None) -> dict[str, Any]:
+    from compliance_reporting.oscal import build_assessment_results, build_poam, validate_oscal
+    report = store.load(_resolve(store, report_id))
+    if kind == "poam":
+        doc = build_poam(report, list_findings(store, as_of=as_of, open_only=True))
+    else:
+        doc = build_assessment_results(report)
+    return {"oscal": doc, "validation": {"ok": not (errs := validate_oscal(doc)), "errors": errs}}
+
+
+def get_audit_package(store: ReportStore, report_id: str = "latest",
+                      as_of: str | None = None) -> dict[str, Any]:
+    """
+    A scoped, self-contained evidence package for an auditor (FUR-CMP-015): the
+    verified report summary + valid OSCAL assessment-results + POA&M + the open
+    findings/exception workpaper — everything needed to inspect the assessment
+    without trusting the live dashboard.
+    """
+    from compliance_reporting.oscal import build_assessment_results, build_poam, validate_oscal
+    report = store.load(_resolve(store, report_id))
+    findings = list_findings(store, as_of=as_of, open_only=True)
+    ar = build_assessment_results(report)
+    poam = build_poam(report, findings)
+    return {
+        "report_id": report["report_id"],
+        "generated_at": report.get("generated_at"),
+        "integrity_sha256": report.get("integrity", {}).get("content_sha256", ""),
+        "versions": report.get("versions", {}),
+        "summary": report_to_summary(report),
+        "oscal": {
+            "assessment_results": ar,
+            "poam": poam,
+            "validation_ok": not (validate_oscal(ar) or validate_oscal(poam)),
+        },
+        "findings": findings,
+    }
 
 
 def get_diff(store: ReportStore, old_id: str, new_id: str) -> dict[str, Any]:

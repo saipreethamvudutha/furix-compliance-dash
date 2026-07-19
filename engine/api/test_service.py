@@ -158,6 +158,31 @@ def test_auto_ingest_routes_known_formats_deterministically():
     assert seen[2] == "generic"  # unknown stays generic (deterministic unless FURIX_LLM_ENRICH=1)
 
 
+def test_findings_lifecycle_end_to_end():
+    """Wave 5: at-risk controls → derived findings → risk acceptance → the
+    live frameworks annotate the at-risk row with the exception."""
+    store = _store()
+    service.ingest_batch(store, _ATTACK, analyzer=_stub_analyzer, registry=_REG, deliver=False)
+    d = service.derive_findings(store, "latest", tenant="acme", actor="analyst",
+                                occurred_at="2026-07-19T09:00:00+00:00")
+    assert d["opened"] >= 2 and d["open_findings"] >= 2   # Control 5 + 10 at risk
+    findings = service.list_findings(store, open_only=True)
+    fid = next(f["finding_id"] for f in findings if f["control_id"] == "Control 5")
+
+    # accept the risk with a full exception
+    service.transition_finding(store, fid, "accept_risk", actor="ciso",
+                               occurred_at="2026-07-19T10:00:00+00:00",
+                               payload={"exception": {"approver": "ciso", "rationale": "legacy",
+                                                      "compensating_control": "isolation",
+                                                      "expiry": "2026-12-01T00:00:00+00:00"}})
+    # the live frameworks now annotate Control 5's at-risk row with the exception
+    fws = service.get_frameworks(store, "latest", as_of="2026-07-20T00:00:00+00:00")
+    cis = next(f for f in fws if f["id"] == "cis")
+    c5 = next(c for c in cis["controls"] if c["reference"] == "Control 5")
+    assert c5["status"] == "gap" and c5["finding"]["state"] == "risk_accepted"
+    assert c5["finding"]["exception"]["approver"] == "ciso"
+
+
 if __name__ == "__main__":
     import sys, traceback
     tests = [(n, f) for n, f in sorted(globals().items())

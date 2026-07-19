@@ -22,7 +22,7 @@ REPORT_SCHEMA_VERSION = "2.0"     # report payload shape + status vocabulary
 SCF_VERSION = "2026.2"            # matches deploy/source_data/scf-full-2026.2.json
 RULE_PACK_VERSION = "POL-15.1"    # the 15 policy rules (bump on rule changes)
 SIGMA_PACK_VERSION = "SIG-22.1"   # the 22 Sigma detection rules + technique map
-OSCAL_VERSION = "1.1.2"           # OSCAL model version our serialisers emit
+OSCAL_VERSION = "1.2.1"           # OSCAL model version our serialisers emit
 
 VERSION_MANIFEST: dict[str, str] = {
     "engine": ENGINE_VERSION,
