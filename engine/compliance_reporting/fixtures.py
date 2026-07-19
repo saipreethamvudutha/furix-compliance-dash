@@ -81,9 +81,15 @@ def _result(
             "_run_timestamp": run_timestamp,
             "_density": {},
         }
+    # Deterministic per-log content hash — mirrors what the real pipeline sets
+    # (pipeline.py computes sha256(raw_log)); lets fixtures exercise the
+    # evidence-lineage path (raw_uri, evidence_refs) without a raw line.
+    import hashlib
+    log_sha256 = hashlib.sha256(f"{log_type}|{run_timestamp}".encode()).hexdigest()
     findings = {
         "log_type": log_type,
         "severity": severity,
+        "log_sha256": log_sha256,
         "cis_controls_mapping": {"control_ids": control_ids},
     }
     if attack_pivot is not None:

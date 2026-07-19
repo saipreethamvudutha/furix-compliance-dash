@@ -46,6 +46,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
+from .assertions import assertion_run
+from .evidence import build_population_manifest, evidence_uri
 from .registry import (
     CONTROL_CATALOG,
     TEST_CATALOG,
@@ -129,6 +131,10 @@ def _evidence_items(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "log_index": idx,
                 "log_type": entry["log_type"],
                 "log_sha256": log_sha,
+                # Resolvable pointer into the immutable evidence store
+                # (FUR-CMP-007). "" when the raw line wasn't retained (legacy
+                # or fixture batches) — the excerpt below is then all there is.
+                "raw_uri": evidence_uri(log_sha) if log_sha else "",
                 "test_id": pf.get("rule_id", "UNKNOWN"),
                 "finding_uuid": pf.get("finding_uuid", ""),
                 "severity": pf.get("severity", "low"),
@@ -158,6 +164,11 @@ def _build_tests(evidence: list[dict[str, Any]], logs_evaluated: int) -> list[di
             status, reason = STATUS_UNKNOWN, "not_observed"
         else:
             status, reason = STATUS_UNKNOWN, "no_data"
+        evidence_rows = sorted(fired, key=lambda e: (e["log_index"], e["finding_uuid"]))
+        evidence_refs = sorted({e["raw_uri"] for e in evidence_rows if e.get("raw_uri")})
+        # Per-assertion population: how many logs this detector evaluated, and
+        # how many matched. Detection-only, so "evaluated" is the observed set.
+        population = {"evaluated": logs_evaluated, "matched": len(fired)}
         tests.append(
             {
                 "test_id": test_id,
@@ -169,7 +180,14 @@ def _build_tests(evidence: list[dict[str, Any]], logs_evaluated: int) -> list[di
                 "evaluation_mode": "detection_only",  # no positive predicate yet
                 "logs_evaluated": logs_evaluated,
                 "occurrences": len(fired),
-                "evidence": sorted(fired, key=lambda e: (e["log_index"], e["finding_uuid"])),
+                "evidence": evidence_rows,
+                # AssertionRun view (FUR-CMP-008): pins the versioned logic
+                # (evaluator_hash), the population, and the evidence it cites.
+                "assertion": assertion_run(
+                    test_id, status=status, status_reason=reason,
+                    occurrences=len(fired), population=population,
+                    evidence_refs=evidence_refs,
+                ),
             }
         )
     return tests
@@ -421,6 +439,12 @@ def build_report(
             "failed_logs": len(failures),
             "log_types": dict(sorted(log_type_counts.items())),
         },
+        # Completeness manifest (FUR-CMP-007): reconciles the subjects the batch
+        # was expected to cover vs what was observed vs errored, so partial
+        # telemetry can never read as healthy.
+        "population": build_population_manifest(
+            expected=len(entries), observed=len(successes), errored=len(failures)
+        ),
         "summary": {
             "tests_total": len(tests),
             "tests_failed": sum(1 for t in tests if t["status"] == STATUS_FAIL),

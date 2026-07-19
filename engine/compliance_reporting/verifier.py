@@ -210,6 +210,30 @@ def _verify_structure(v: VerificationResult, report: Mapping[str, Any]) -> bool:
                     f"{fw['framework_id']}:{req['requirement_id']} status "
                     f"{req['status']!r} not derivable from contributors {statuses}")
 
+    # ── EVID + ASSERT: evidence pointers and assertion runs (FUR-CMP-007/008) ──
+    from .assertions import ASSERTION_CATALOG  # local import avoids load cycle
+    from .evidence import evidence_uri
+    for t in tests:
+        for ev in t.get("evidence", []):
+            sha = ev.get("log_sha256", "")
+            uri = ev.get("raw_uri", "")
+            if sha:
+                v.check("EVID-URI", uri == evidence_uri(sha),
+                        f"{t['test_id']} evidence raw_uri {uri!r} != uri for {sha[:12]}")
+            else:
+                v.check("EVID-URI", uri == "",
+                        f"{t['test_id']} evidence has a raw_uri without a log_sha256")
+        a = t.get("assertion")
+        if a is not None:
+            spec = ASSERTION_CATALOG.get(t["test_id"])
+            v.check("ASSERT-HASH", spec is not None and a["evaluator_hash"] == spec.evaluator_hash(),
+                    f"{t['test_id']} assertion evaluator_hash does not match the spec")
+            refs = sorted({e["raw_uri"] for e in t.get("evidence", []) if e.get("raw_uri")})
+            v.check("ASSERT-REFS", a["evidence_refs"] == refs,
+                    f"{t['test_id']} assertion.evidence_refs do not match its evidence rows")
+            v.check("ASSERT-STATUS", a["status"] == t["status"],
+                    f"{t['test_id']} assertion status disagrees with the test status")
+
     # ── HASH: integrity + deterministic id ────────────────────────────────────
     payload = {k: report[k] for k in report if k not in VOLATILE_KEYS}
     expected_hash = _sha256_of(payload)
@@ -235,6 +259,17 @@ def _verify_rollup(
             f"successful_logs {b['successful_logs']} != recomputed {truth['successful_logs']}")
     v.check("RECOMP-FAILED", b["failed_logs"] == truth["failed_logs"],
             f"failed_logs {b['failed_logs']} != recomputed {truth['failed_logs']}")
+
+    # ── POP: completeness manifest reconciles with the batch (FUR-CMP-007) ─────
+    pop = report.get("population", {})
+    v.check("POP-EXPECTED", pop.get("expected") == truth["total_logs"],
+            "population.expected != total logs")
+    v.check("POP-OBSERVED", pop.get("observed") == truth["successful_logs"],
+            "population.observed != successful logs")
+    v.check("POP-ERRORED", pop.get("errored") == truth["failed_logs"],
+            "population.errored != failed logs")
+    v.check("POP-RECONCILE", pop.get("reconciled") is True,
+            "population manifest does not reconcile (observed+errored+excluded+dup != expected)")
 
     for t in tests:
         tid = t["test_id"]
