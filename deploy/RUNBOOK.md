@@ -51,25 +51,38 @@ docker compose up -d          # brings up api, web, nginx
 docker compose ps             # all healthy
 ```
 
-## 5. Smoke tests
+## 5. Authentication (FUR-CMP-004) — required before any data call
+Every endpoint except `/api/health` needs a bearer key. Generate real keys and
+put them in `.env` (see `FURIX_API_KEYS` / `NEXT_PUBLIC_API_KEY`):
 ```bash
-# API health (no engine needed)
+openssl rand -hex 24     # make one per key; never ship the CHANGE-ME default
+```
+`FURIX_ENV=production` (the default in compose) refuses to mint a dev key, so a
+missing/blank `FURIX_API_KEYS` means every request is denied — fail closed.
+
+## 6. TLS
+The bearer key is a secret in transit — terminate TLS at nginx (or an upstream
+load balancer) before exposing the box. Do not serve the API over plain HTTP on
+an untrusted network. A self-signed cert is fine for internal testing; use a
+real cert (Let's Encrypt / corporate CA) for anything beyond a lab.
+
+## 7. Smoke tests
+```bash
+KEY=furix-dev-key   # or your real admin key from .env
+
+# API health (open, no key needed)
 curl -fsS http://localhost/api/health ; echo
+
+# Data endpoints require the key — this must 401 WITHOUT it:
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost/api/reports        # → 401
+curl -fsS http://localhost/api/reports -H "Authorization: Bearer $KEY"       # → []
 
 # Phase 0 import-safety: importing the pipeline must NOT run a batch
 docker compose exec api python -c "import pipeline; print('import OK — no batch ran')"
 
-# Single-log run through the real pipeline (needs bootstrap done)
-docker compose exec api python -c "
-from pipeline import run_full_pipeline, SAMPLE_LOGS
-r = run_full_pipeline(SAMPLE_LOGS['cloudtrail'], log_type='cloudtrail')
-print('failure_stage:', r['_failure_stage'])
-print('cis_controls :', r['compliance_mapping']['cis_controls'])
-print('violations   :', len(r['policy_findings']))
-"
-
 # End-to-end via HTTP: generate + ingest 50 synthetic logs → verified report
-curl -fsS -XPOST http://localhost/api/generate -H 'content-type: application/json' \
+curl -fsS -XPOST http://localhost/api/generate \
+  -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
   -d '{"count":50,"attack_ratio":0.35,"seed":7}' | python3 -m json.tool | head -30
 ```
 

@@ -57,6 +57,13 @@ services:
       FURIX_OUTPUT_DIR: /data/output
       FURIX_REPORT_STORE: /data/reports
       FURIX_CORS_ORIGINS: ${FURIX_CORS_ORIGINS:-http://localhost}
+      # Auth (FUR-CMP-004): every data endpoint requires a bearer key. Provide a
+      # JSON list of {key,key_id,tenant,role}. Roles: admin|analyst|auditor|mssp.
+      # MUST be set in production; FURIX_ENV=production refuses to mint a dev key.
+      FURIX_ENV: ${FURIX_ENV:-production}
+      FURIX_API_KEYS: ${FURIX_API_KEYS:-[{"key":"furix-dev-key","key_id":"dev","tenant":"default","role":"admin"}]}
+      FURIX_RATE_LIMIT_PER_MIN: ${FURIX_RATE_LIMIT_PER_MIN:-240}
+      FURIX_MAX_INGEST_CHARS: ${FURIX_MAX_INGEST_CHARS:-20971520}
     volumes:
       - ./source_data:/data/source   # drop the SCF JSON + PDFs here (host side)
       - furix_reports:/data/reports
@@ -74,6 +81,9 @@ services:
       context: ../dashboard
       args:
         NEXT_PUBLIC_API_URL: ""      # empty → browser calls same origin /api via nginx
+        # The single-tenant demo key the browser sends as a bearer token. In a
+        # real deployment this is replaced by per-user keys from an OIDC session.
+        NEXT_PUBLIC_API_KEY: ${NEXT_PUBLIC_API_KEY:-furix-dev-key}
     depends_on:
       - api
     restart: unless-stopped
