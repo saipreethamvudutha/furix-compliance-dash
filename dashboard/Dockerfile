@@ -9,9 +9,9 @@ RUN npm ci
 COPY . .
 ARG NEXT_PUBLIC_API_URL=""
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-# Bearer key the browser sends to the API (FUR-CMP-004). Inlined at build time.
-ARG NEXT_PUBLIC_API_KEY="furix-dev-key"
-ENV NEXT_PUBLIC_API_KEY=$NEXT_PUBLIC_API_KEY
+# NOTE: the API bearer key is NOT built into the client any more (P0-1). The
+# browser calls the same-origin server-side BFF (/bff/*), which attaches the key
+# from the server-only FURIX_API_KEY env at RUNTIME (set on the web container).
 RUN npm run build
 
 FROM node:20-slim AS runner

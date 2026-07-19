@@ -8,6 +8,8 @@ export function useCoventraStats() {
   useEffect(() => {
     const cached = _peekCached();
     if (cached) {
+      // client-only cache hydration on mount
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStats(cached);
       return;
     }

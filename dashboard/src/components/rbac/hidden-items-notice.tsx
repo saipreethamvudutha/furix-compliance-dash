@@ -30,8 +30,8 @@ export function HiddenItemsNotice({ count, resourceLabel = "items", onRequest }:
     >
       <EyeOff className="h-3.5 w-3.5" style={{ color: "var(--crit-red)" }} />
       <p className="text-[11.5px]" style={{ color: "var(--panel-text)" }}>
-        <strong>{count}</strong> {resourceLabel} hidden because your role's scope
-        doesn't include the required data sensitivity.
+        <strong>{count}</strong> {resourceLabel} hidden because your role&rsquo;s scope
+        doesn&rsquo;t include the required data sensitivity.
       </p>
       {!jitActive && (
         <button

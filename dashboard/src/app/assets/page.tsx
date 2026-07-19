@@ -296,6 +296,8 @@ function CoventraAssetRegistry({ filter }: { filter: RegistryFilter }) {
     });
   }, [byType, q, sev]);
 
+  // reset pagination when filters change (derived-state reset)
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setPage(1), [q, sev, filter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));

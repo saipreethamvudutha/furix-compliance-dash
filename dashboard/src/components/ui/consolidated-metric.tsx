@@ -28,7 +28,7 @@ export function ConsolidatedMetric({
       style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(0,1fr))` }}
     >
       {cols.map((c, i) => {
-        const isCopper = (c as any).tone === "copper";
+        const isCopper = (c as { tone?: string }).tone === "copper";
         const tone = isCopper ? "#e0a063" : "#6fd6c4";
         const valColor = isCopper ? "var(--metric-copper)" : "var(--metric-teal)";
         const data = Array.from({ length: 6 }, (_, k) => ({ v: 8 + Math.sin(k + i) * 4 + k }));

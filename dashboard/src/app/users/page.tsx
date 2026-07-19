@@ -10,7 +10,7 @@ const roleTone: Record<Role, { bg: string; fg: string }> = {
   analyst:          { bg: "rgba(111,214,196,0.15)", fg: "#6fd6c4" },
   compliance_admin: { bg: "rgba(225,192,105,0.18)", fg: "#e1c069" },
   risk_analyst:     { bg: "rgba(224,160,99,0.18)",  fg: "#e0a063" },
-  executive_viewer: { bg: "rgba(255,255,255,0.08)", fg: "var(--panel-text)" as any },
+  executive_viewer: { bg: "rgba(255,255,255,0.08)", fg: "var(--panel-text)" },
   admin:            { bg: "rgba(212,106,94,0.18)",  fg: "#d46a5e" },
 };
 

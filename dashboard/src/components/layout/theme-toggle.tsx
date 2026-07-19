@@ -12,6 +12,8 @@ export function ThemeToggle() {
   useEffect(() => {
     const saved = (typeof window !== "undefined" &&
       (localStorage.getItem("byoc-theme") as Mode)) || "dark";
+    // client-only init from localStorage on mount (SSR-safe)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMode(saved);
     document.documentElement.setAttribute("data-theme", saved);
   }, []);

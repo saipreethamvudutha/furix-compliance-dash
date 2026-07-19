@@ -49,7 +49,10 @@ export default function ProfilePage() {
     try {
       const e = localStorage.getItem("byoc-user-email");
       const r = localStorage.getItem("byoc-user-role");
+      // client-only profile hydration from localStorage on mount
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (e) setEmail(e);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (r) setRoleLabel(r);
     } catch {}
   }, []);

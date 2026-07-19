@@ -80,10 +80,12 @@ services:
     build:
       context: ../dashboard
       args:
-        NEXT_PUBLIC_API_URL: ""      # empty → browser calls same origin /api via nginx
-        # The single-tenant demo key the browser sends as a bearer token. In a
-        # real deployment this is replaced by per-user keys from an OIDC session.
-        NEXT_PUBLIC_API_KEY: ${NEXT_PUBLIC_API_KEY:-furix-dev-key}
+        NEXT_PUBLIC_API_URL: ""      # unused by the client now (BFF is same-origin)
+    environment:
+      # Server-side BFF config (P0-1): the browser never sees these. The Next
+      # server attaches FURIX_API_KEY when proxying /bff/* to the api service.
+      FURIX_API_URL: http://api:8000
+      FURIX_API_KEY: ${FURIX_API_KEY:-furix-dev-key}
     depends_on:
       - api
     restart: unless-stopped

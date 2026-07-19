@@ -35,14 +35,12 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
       - run: npm ci --no-audit --no-fund
-      - name: Production dependency audit (fail on high/critical)
+      - name: Production dependency audit (blocks on high/critical)
         run: npm audit --omit=dev --audit-level=high
-        continue-on-error: true   # advisory until the lockfile SLA is enforced
       - name: Build
         run: npm run build
-      - name: Lint
+      - name: Lint (zero-error gate)
         run: npm run lint
-        continue-on-error: true   # FUR-QA-002: 10 pre-existing errors tracked separately
 
   sbom:
     runs-on: ubuntu-latest

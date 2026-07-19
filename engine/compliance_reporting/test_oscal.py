@@ -91,6 +91,22 @@ def test_oscal_is_deterministic_and_json_serialisable():
     assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
+def test_schema_hook_is_honest_when_not_configured():
+    """The official-schema hook must report ran=False (not a false 'valid')
+    when no schema/jsonschema is available — never mistake unchecked for valid."""
+    from .oscal import validate_oscal_schema
+    res = validate_oscal_schema(build_assessment_results(_report()))
+    assert res["ran"] is False and "structural" in res["note"]
+    assert res["ok"] is True and res["errors"] == []      # structurally valid
+
+
+def test_imports_are_not_dangling_internal_refs():
+    ar = build_assessment_results(_report())["assessment-results"]
+    # import-ap is an external href with remarks, not a dangling internal #uuid
+    assert ar["import-ap"]["href"].startswith("https://")
+    assert "remarks" in ar["import-ap"]
+
+
 if __name__ == "__main__":
     import sys
     import traceback

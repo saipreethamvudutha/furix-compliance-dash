@@ -377,32 +377,38 @@ def _verify_rollup(
             set(s.get("controls_compliant", [])) == {c for c, st in truth["control_status"].items() if st == "compliant"},
             "summary.controls_compliant does not match recomputed compliant set")
 
-    # ── CFG: config assertions reconcile against their catalog ─────────────────
+    # ── CFG: config + manual assertions reconcile against their catalogs ───────
     from .config_assertions import CONFIG_ASSERTION_CATALOG  # local import
+    from .manual_evidence import MANUAL_ASSERTION_CATALOG
     for res in report.get("config_assertions", []):
-        spec = CONFIG_ASSERTION_CATALOG.get(res["spec_id"])
-        v.check("CFG-SPEC", spec is not None, f"unknown config assertion {res.get('spec_id')}")
+        sid = res.get("spec_id")
+        spec = CONFIG_ASSERTION_CATALOG.get(sid) or MANUAL_ASSERTION_CATALOG.get(sid)
+        v.check("CFG-SPEC", spec is not None, f"unknown assertion {sid}")
         if spec is not None:
             v.check("CFG-HASH", res["evaluator_hash"] == spec.evaluator_hash(),
-                    f"{res['spec_id']} evaluator_hash does not match the spec")
-        pop = res.get("population", {})
-        v.check("CFG-POP",
-                pop.get("passing", 0) + pop.get("failing", 0) == pop.get("in_scope", 0),
-                f"{res.get('spec_id')} population passing+failing != in_scope")
-        # config evidence points at the immutable store by content hash
-        for ev in res.get("evidence", []):
-            sha = ev.get("resource_sha256", "")
-            if sha:
-                v.check("CFG-EVID", ev.get("raw_uri") == f"furix-evidence://{sha}",
-                        f"{res.get('spec_id')} resource raw_uri != uri for its sha256")
-        # a PASS is only legal on a complete population with no failures
-        if res.get("status") == "pass":
-            v.check("CFG-PASS-GATE",
-                    pop.get("reconciled") and pop.get("failing", 0) == 0 and pop.get("in_scope", 0) > 0,
-                    f"{res['spec_id']} claims pass without a clean, complete population")
-            # stale evidence may never back a pass (FUR-CMP-010)
-            v.check("CFG-FRESH-GATE", not res.get("freshness", {}).get("stale"),
-                    f"{res['spec_id']} claims pass on stale evidence")
+                    f"{sid} evaluator_hash does not match the spec")
+        is_manual = sid in MANUAL_ASSERTION_CATALOG
+        if not is_manual:
+            pop = res.get("population", {})
+            v.check("CFG-POP",
+                    pop.get("passing", 0) + pop.get("failing", 0) == pop.get("in_scope", 0),
+                    f"{sid} population passing+failing != in_scope")
+            for ev in res.get("evidence", []):
+                sha = ev.get("resource_sha256", "")
+                if sha:
+                    v.check("CFG-EVID", ev.get("raw_uri") == f"furix-evidence://{sha}",
+                            f"{sid} resource raw_uri != uri for its sha256")
+            if res.get("status") == "pass":
+                v.check("CFG-PASS-GATE",
+                        pop.get("reconciled") and pop.get("failing", 0) == 0 and pop.get("in_scope", 0) > 0,
+                        f"{sid} claims pass without a clean, complete population")
+                v.check("CFG-FRESH-GATE", not res.get("freshness", {}).get("stale"),
+                        f"{sid} claims pass on stale evidence")
+        else:
+            # a manual PASS requires an actual attestation on record
+            if res.get("status") == "pass":
+                v.check("MAN-PASS-GATE", bool(res.get("evidence")),
+                        f"{sid} claims pass with no attestation on record")
 
 
 # ── public API ────────────────────────────────────────────────────────────────

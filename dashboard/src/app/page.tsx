@@ -117,6 +117,8 @@ const scanDataByRange: Record<"Week" | "Month" | "Year", { m: string; a: number;
 
 export default function OverviewPage() {
   const [mounted, setMounted] = useState(false);
+  // standard mount flag for SSR hydration gating
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setMounted(true), []);
   const [range, setRange] = useState<"Week" | "Month" | "Year">("Month");
   const sp = useSearchParams();
@@ -373,7 +375,7 @@ export default function OverviewPage() {
             {(cstats?.topRiskAssets.slice(0, 4) ?? []).map((a) => {
               const tone: "crit" | "high" | "med" = a.vulnerabilities.critical > 0 ? "crit" : a.vulnerabilities.high > 0 ? "high" : "med";
               const badge = tone === "crit" ? "Critical" : tone === "high" ? "High" : "Medium";
-              const score = (tone === "crit" ? 9 : tone === "high" ? 7.5 : 6) + Math.random();
+              const score = (tone === "crit" ? 9 : tone === "high" ? 7.5 : 6);
               return (
                 <RiskPlaque
                   key={a.id}

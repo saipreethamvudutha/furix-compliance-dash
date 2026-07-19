@@ -75,6 +75,7 @@ def ingest_batch(
     log_type: str = "auto",
     tenant: str = "default",
     config_snapshot: Any = None,
+    attestations: Any = None,
     analyzer: Analyzer | None = None,
     registry: FrameworkRegistry | None = None,
     deliver: bool = True,
@@ -116,7 +117,8 @@ def ingest_batch(
 
     if on_progress:
         on_progress(total, total, "finalizing")
-    report = build_report(results, registry=registry, config_snapshot=config_snapshot)
+    report = build_report(results, registry=registry, config_snapshot=config_snapshot,
+                          attestations=attestations)
     verification = verify_report(report, results)
     if not verification.ok:
         raise IngestError(f"report failed verification: {verification.failures}")
@@ -169,15 +171,16 @@ def generate_and_ingest(
     """
     from log_generator.generate import generate  # noqa: PLC0415
 
-    snapshot = None
+    snapshot = attests = None
     if with_config:
-        from compliance_reporting.fixtures import demo_config_snapshot  # noqa: PLC0415
+        from compliance_reporting.fixtures import demo_attestations, demo_config_snapshot  # noqa: PLC0415
         snapshot = demo_config_snapshot()
+        attests = demo_attestations()
 
     lines = generate(count=count, attack_ratio=attack_ratio, types=types, seed=seed)
     return ingest_batch(store, "\n".join(lines), log_type="auto", tenant=tenant,
-                        config_snapshot=snapshot, analyzer=analyzer, registry=registry,
-                        on_progress=on_progress)
+                        config_snapshot=snapshot, attestations=attests, analyzer=analyzer,
+                        registry=registry, on_progress=on_progress)
 
 
 def ingest_config(

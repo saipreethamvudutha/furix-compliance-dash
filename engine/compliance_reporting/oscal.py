@@ -79,7 +79,13 @@ def build_assessment_results(report: Mapping[str, Any]) -> dict[str, Any]:
         "assessment-results": {
             "uuid": _uuid("ar", rid),
             "metadata": _metadata("Furix Assessment Results", report),
-            "import-ap": {"href": f"#{_uuid('ap', rid)}"},
+            # Furix emits Assessment Results directly from its own deterministic
+            # run, not from a separately-authored Assessment Plan. OSCAL requires
+            # an import-ap reference, so we emit a self-describing external one
+            # and document it — no dangling internal placeholder.
+            "import-ap": {"href": "https://furix.local/assessment-plan/deterministic",
+                          "remarks": "Furix runs a fixed deterministic assessment; the plan is "
+                                     "the versioned rule pack recorded in metadata props."},
             "results": [{
                 "uuid": _uuid("result", rid),
                 "title": "Deterministic control assessment",
@@ -137,7 +143,9 @@ def build_poam(report: Mapping[str, Any], findings: list[Mapping[str, Any]] | No
         "plan-of-action-and-milestones": {
             "uuid": _uuid("poam", rid),
             "metadata": _metadata("Furix Plan of Action & Milestones", report),
-            "import-ssp": {"href": f"#{_uuid('ssp', rid)}"},
+            "import-ssp": {"href": "https://furix.local/ssp/monitored-system",
+                           "remarks": "The monitored system is identified by system-id; a full "
+                                      "SSP import is provided by the customer's GRC of record."},
             "system-id": {"identifier-type": "https://ietf.org/rfc/rfc4122",
                           "id": _uuid("system", rid)},
             "risks": risks,
@@ -200,3 +208,32 @@ def validate_oscal(doc: Mapping[str, Any]) -> list[str]:
         if ref not in declared:
             errors.append(f"{name} references undefined uuid {ref}")
     return errors
+
+
+def validate_oscal_schema(doc: Mapping[str, Any], schema_path: str | None = None) -> dict[str, Any]:
+    """
+    Validate against the OFFICIAL OSCAL 1.2.1 JSON schema when both `jsonschema`
+    and a schema file are available (the audit's ask). Returns
+    {ran, ok, errors, note}. When the schema/lib is unavailable it does NOT
+    claim success — it reports ran=False so callers never mistake "not checked"
+    for "valid". Structural validation (validate_oscal) always runs regardless.
+    """
+    import os
+    structural = validate_oscal(doc)
+    schema_path = schema_path or os.environ.get("FURIX_OSCAL_SCHEMA")
+    if not schema_path or not os.path.exists(schema_path):
+        return {"ran": False, "ok": not structural, "errors": structural,
+                "note": "official OSCAL schema not configured (set FURIX_OSCAL_SCHEMA); "
+                        "structural validation only"}
+    try:
+        import json as _json
+        import jsonschema  # optional dep
+        schema = _json.loads(open(schema_path, encoding="utf-8").read())
+        errs = [str(e.message) for e in
+                jsonschema.Draft202012Validator(schema).iter_errors(doc)]
+        return {"ran": True, "ok": not errs and not structural,
+                "errors": structural + errs, "note": f"validated against {schema_path}"}
+    except ImportError:
+        return {"ran": False, "ok": not structural, "errors": structural,
+                "note": "jsonschema not installed (pip install jsonschema)"}
+

@@ -292,6 +292,28 @@ def demo_config_snapshot() -> dict[str, Any]:
     }
 
 
+def demo_attestations() -> list[dict[str, Any]]:
+    """Recent, in-cadence attestations for the people/process controls (Wave-E),
+    so Controls 9/14/15/17/18 can positively pass via signed human evidence."""
+    return [
+        {"spec_id": "MAN-EMAIL-BROWSER", "attester": "it-lead@acme",
+         "statement": "DNS filtering + safe-attachment enforced", "evidence_ref": "TICKET-9021",
+         "attested_at": "2026-06-01T00:00:00+00:00"},
+        {"spec_id": "MAN-SEC-TRAINING", "attester": "hr@acme",
+         "statement": "100% completed annual training", "evidence_ref": "LMS-2026",
+         "attested_at": "2026-05-15T00:00:00+00:00"},
+        {"spec_id": "MAN-VENDOR-REVIEW", "attester": "grc@acme",
+         "statement": "All critical vendors reviewed Q2", "evidence_ref": "VRM-2026-Q2",
+         "attested_at": "2026-06-20T00:00:00+00:00"},
+        {"spec_id": "MAN-INCIDENT-EXERCISE", "attester": "soc-lead@acme",
+         "statement": "Tabletop exercise conducted", "evidence_ref": "IR-EX-2026",
+         "attested_at": "2026-04-10T00:00:00+00:00"},
+        {"spec_id": "MAN-PENTEST", "attester": "ciso@acme",
+         "statement": "External pentest completed, findings remediated", "evidence_ref": "PT-2026",
+         "attested_at": "2026-03-01T00:00:00+00:00"},
+    ]
+
+
 def demo_config_snapshot_with_gap() -> dict[str, Any]:
     """Same snapshot but one repo has branch protection OFF — CFG-GH-BRANCH-
     PROTECTION FAILs, so Control 16 flips COMPLIANT → at_risk. For the FAIL path."""

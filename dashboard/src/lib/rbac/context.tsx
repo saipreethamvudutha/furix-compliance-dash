@@ -56,11 +56,14 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     try {
       const r = localStorage.getItem(LS_ROLE) as RoleId | null;
+      // client-only RBAC hydration from localStorage on mount
+      /* eslint-disable react-hooks/set-state-in-effect */
       if (r && ROLES[r]) setActiveRoleState(r);
       const m = localStorage.getItem(LS_MATRIX);
       if (m) setMatrixState({ ...DEFAULT_MATRIX, ...JSON.parse(m) });
       const s = localStorage.getItem(LS_SCOPES);
       if (s) setScopesState({ ...DEFAULT_SCOPE, ...JSON.parse(s) });
+      /* eslint-enable react-hooks/set-state-in-effect */
       const t = localStorage.getItem(LS_TIERS);
       if (t) setTiersState({ ...DEFAULT_TIER, ...JSON.parse(t) });
     } catch {}
@@ -114,7 +117,22 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const jitActive = jitExpiresAt !== null && Date.now() < jitExpiresAt;
+  // Real-time JIT-elevation gate. Computed in an effect (not render) so it
+  // stays pure and re-checks as the window elapses.
+  const [jitActive, setJitActive] = useState(false);
+  useEffect(() => {
+    if (jitExpiresAt === null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setJitActive(false);
+      return;
+    }
+    /* eslint-disable react-hooks/set-state-in-effect */
+    const tick = () => setJitActive(Date.now() < jitExpiresAt);
+    tick();
+    /* eslint-enable react-hooks/set-state-in-effect */
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [jitExpiresAt]);
 
   const can = useCallback(
     (capId: string, role?: RoleId) => {

@@ -6,14 +6,10 @@
 // seed data when the backend is unreachable.
 // ============================================================
 
-export const API_BASE =
-  (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
-
-// The API requires a bearer key on every data endpoint (FUR-CMP-004). In this
-// single-tenant demo the key is provided at build time via NEXT_PUBLIC_API_KEY;
-// a real multi-tenant deployment mints per-user keys behind an OIDC session
-// (Wave 4) and this constant goes away.
-const API_KEY = process.env.NEXT_PUBLIC_API_KEY ?? "furix-dev-key";
+// All API calls go through the same-origin server-side BFF (/bff/*), which
+// attaches the bearer key on the server (P0-1). The browser never holds a
+// credential — there is deliberately no NEXT_PUBLIC_API_KEY here.
+export const API_BASE = "/bff";
 
 export class ApiError extends Error {
   constructor(message: string, readonly status?: number) {
@@ -29,7 +25,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${API_KEY}`,
         ...(init?.headers ?? {}),
       },
       cache: "no-store",

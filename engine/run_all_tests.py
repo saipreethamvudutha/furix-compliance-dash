@@ -17,6 +17,7 @@ MODULES = [
     "compliance_reporting.test_reporting",
     "compliance_reporting.test_evidence",
     "compliance_reporting.test_config",
+    "compliance_reporting.test_manual",
     "compliance_reporting.test_exceptions",
     "compliance_reporting.test_oscal",
     "compliance_reporting.adapters.test_adapter",
