@@ -73,14 +73,16 @@ def ingest_batch(
     text: str,
     *,
     log_type: str = "auto",
+    tenant: str = "default",
     analyzer: Analyzer | None = None,
     registry: FrameworkRegistry | None = None,
     deliver: bool = True,
     on_progress: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Any]:
     """
-    Run each log line through the analyzer, build + verify a report, persist it,
-    and (if a prior report exists) diff + deliver regression alerts.
+    Run each log line through the analyzer, retain the raw line immutably,
+    build + verify a report, persist it, and (if a prior report exists) diff +
+    deliver regression alerts.
 
     on_progress(processed, total, phase) is called during analysis and at each
     finalization phase, for the background-job progress bar.
@@ -91,11 +93,23 @@ def ingest_batch(
     analyzer = analyzer or _default_analyzer()
     registry = registry or FrameworkRegistry.from_live()
 
+    # Immutable evidence store lives alongside this tenant's report store
+    # (FUR-CMP-007): every raw line is retained, content-addressed, write-once.
+    from compliance_reporting.evidence import EvidenceStore  # noqa: PLC0415
+    ev_store = EvidenceStore(store.root)
+
     typed_lines = classify_lines(split_log_lines(text), log_type)
     total = len(typed_lines)
     results = []
     for i, (detected_type, line) in enumerate(typed_lines):
-        results.append({"log_type": detected_type, "result": dict(analyzer(line, detected_type))})
+        result = dict(analyzer(line, detected_type))
+        observed_at = ((result.get("findings") or {}).get("timestamp")
+                       if isinstance(result.get("findings"), dict) else None)
+        try:
+            ev_store.put(line, source=detected_type, tenant=tenant, observed_at=observed_at)
+        except OSError:
+            pass  # evidence retention failure must not silently corrupt the verdict path
+        results.append({"log_type": detected_type, "result": result})
         if on_progress:
             on_progress(i + 1, total, "analyzing")
 
@@ -140,6 +154,7 @@ def generate_and_ingest(
     attack_ratio: float = 0.35,
     seed: int = 0,
     types: list[str] | None = None,
+    tenant: str = "default",
     analyzer: Analyzer | None = None,
     registry: FrameworkRegistry | None = None,
     on_progress: Callable[[int, int, str], None] | None = None,
@@ -148,7 +163,7 @@ def generate_and_ingest(
     from log_generator.generate import generate  # noqa: PLC0415
 
     lines = generate(count=count, attack_ratio=attack_ratio, types=types, seed=seed)
-    return ingest_batch(store, "\n".join(lines), log_type="auto",
+    return ingest_batch(store, "\n".join(lines), log_type="auto", tenant=tenant,
                         analyzer=analyzer, registry=registry, on_progress=on_progress)
 
 

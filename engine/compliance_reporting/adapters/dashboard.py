@@ -76,6 +76,7 @@ def _control_index(report: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         evidence: list[dict[str, Any]] = []
         for tid in c.get("failing_tests", []):
             t = tests_by_id.get(tid, {})
+            evaluator_hash = (t.get("assertion") or {}).get("evaluator_hash", "")
             for ev in t.get("evidence", []):
                 evidence.append({
                     "test_id": tid,
@@ -84,6 +85,11 @@ def _control_index(report: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
                     "log_index": ev.get("log_index"),
                     "severity": ev.get("severity", ""),
                     "detail": ev.get("triggered_value", ""),
+                    # evidence lineage (FUR-CMP-007): resolvable pointer + the
+                    # versioned logic that evaluated it, for reproduction.
+                    "raw_uri": ev.get("raw_uri", ""),
+                    "sha256": ev.get("log_sha256", ""),
+                    "evaluator_hash": evaluator_hash,
                 })
         index[c["control_id"]] = {
             "status": c["status"],
@@ -124,11 +130,20 @@ def _systems_for(via_controls: list[str], cidx: dict[str, dict[str, Any]]) -> li
             label = ev["log_type"]
             if ev.get("log_index") is not None:
                 label = f"{ev['log_type']} #{ev['log_index']}"
-            systems.append({
+            row = {
                 "name": label,
                 "status": "gap",
                 "detail": f"{ev['test_id']} — {ev['detail']}"[:180] or ev["test_title"],
-            })
+            }
+            if ev.get("raw_uri"):
+                row["evidenceUri"] = ev["raw_uri"]
+                # a copyable command an auditor runs to reproduce this verdict
+                # from the immutable evidence, without trusting the dashboard.
+                row["reproduce"] = (
+                    f"furix verify --evidence {ev['sha256'][:16]} "
+                    f"--assertion {ev['test_id']} --evaluator {ev['evaluator_hash'][:12]}"
+                )
+            systems.append(row)
             if len(systems) >= _MAX_SYSTEMS:
                 return systems
     return systems
@@ -244,6 +259,7 @@ def report_to_summary(report: Mapping[str, Any]) -> dict[str, Any]:
         "successful_logs": b.get("successful_logs", 0),
         "failed_logs": b.get("failed_logs", 0),
         "total_violations": s.get("total_violations", 0),
+        "population": report.get("population", {}),
         "frameworks": [
             {"id": f["id"], "name": f["name"], "shortName": f["shortName"],
              "percentage": f["percentage"], "coveragePct": f["coveragePct"],

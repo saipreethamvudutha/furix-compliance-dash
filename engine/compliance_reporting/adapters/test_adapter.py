@@ -103,6 +103,28 @@ def test_gap_rows_carry_traceable_evidence_and_recommendation():
     assert saw_gap_with_evidence, "expected at least one at-risk row backed by evidence"
 
 
+def test_gap_rows_carry_evidence_lineage_and_reproduction():
+    """FUR-CMP-007: at-risk rows expose a resolvable evidence URI and a
+    copyable reproduction command an auditor can run."""
+    fws = report_to_frameworks(_report())
+    saw_lineage = False
+    for f in fws:
+        for c in f["controls"]:
+            for s in c["systems"]:
+                if s.get("evidenceUri"):
+                    saw_lineage = True
+                    assert s["evidenceUri"].startswith("furix-evidence://")
+                    assert s["reproduce"].startswith("furix verify --evidence ")
+    assert saw_lineage, "expected evidence lineage on at least one at-risk row"
+
+
+def test_summary_carries_population_manifest():
+    s = report_to_summary(_report())
+    pop = s["population"]
+    assert pop["expected"] == 5 and pop["observed"] == 4 and pop["errored"] == 1
+    assert pop["reconciled"] is True
+
+
 def test_met_and_na_rows_have_no_systems():
     for f in report_to_frameworks(_report()):
         for c in f["controls"]:

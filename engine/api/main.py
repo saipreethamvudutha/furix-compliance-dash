@@ -161,9 +161,10 @@ def ingest(body: IngestBody, principal: Principal = Depends(require(SCOPE_INGEST
     if len(body.text) > _MAX_INGEST_CHARS:
         raise HTTPException(status_code=413, detail="log payload too large")
     store = _store_for(principal, None)
-    text, lt = body.text, body.log_type
+    text, lt, tn = body.text, body.log_type, principal.tenant_id
     job_id = _jobs.submit(
-        lambda progress: service.ingest_batch(store, text, log_type=lt, on_progress=progress),
+        lambda progress: service.ingest_batch(store, text, log_type=lt, tenant=tn,
+                                              on_progress=progress),
         owner=principal.key_id,
     )
     return {"job_id": job_id}
@@ -172,10 +173,10 @@ def ingest(body: IngestBody, principal: Principal = Depends(require(SCOPE_INGEST
 @app.post("/api/generate", status_code=202)
 def generate(body: GenerateBody, principal: Principal = Depends(require(SCOPE_INGEST, "generate"))):
     store = _store_for(principal, None)
-    c, ar, sd = max(0, body.count), body.attack_ratio, body.seed
+    c, ar, sd, tn = max(0, body.count), body.attack_ratio, body.seed, principal.tenant_id
     job_id = _jobs.submit(
         lambda progress: service.generate_and_ingest(
-            store, count=c, attack_ratio=ar, seed=sd, on_progress=progress),
+            store, count=c, attack_ratio=ar, seed=sd, tenant=tn, on_progress=progress),
         owner=principal.key_id,
     )
     return {"job_id": job_id}
@@ -191,8 +192,10 @@ async def ingest_file(file: UploadFile,
     if len(raw) > _MAX_INGEST_CHARS:
         raise HTTPException(status_code=413, detail="file too large")
     store = _store_for(principal, None)
+    tn = principal.tenant_id
     job_id = _jobs.submit(
-        lambda progress: service.ingest_batch(store, raw, log_type=log_type, on_progress=progress),
+        lambda progress: service.ingest_batch(store, raw, log_type=log_type, tenant=tn,
+                                              on_progress=progress),
         owner=principal.key_id,
     )
     return {"job_id": job_id}
