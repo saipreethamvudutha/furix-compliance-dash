@@ -31,7 +31,7 @@ const NAV: Record<string, NavItem> = {
   discovery: { label: "Discovery",    href: "/discovery",       icon: Compass },
   scans:     { label: "Scans",        href: "/scans",           icon: Radar },
   ingest:    { label: "Ingest",       href: "/ingest",          icon: FileInput },
-  compliance:{ label: "Compliance",   href: "/compliance/live", icon: ShieldCheck },
+  compliance:{ label: "Compliance",   href: "/compliance", icon: ShieldCheck },
   alerts:    { label: "Alerts",       href: "/alerts",          icon: AlertTriangle },
   assets:    { label: "Assets",       href: "/assets",          icon: Database },
   risks:     { label: "Risks",        href: "/risk-scoring",    icon: Gauge },
