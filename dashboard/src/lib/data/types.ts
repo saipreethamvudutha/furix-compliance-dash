@@ -236,6 +236,22 @@ export interface ComplianceControl {
   systems: EvidenceRow[];
   aiRecommendation?: string;
   attack?: AttackRef[];
+  /** remediation / exception status for an at-risk control (Wave 5) */
+  finding?: FindingAnnotation;
+}
+
+export interface FindingAnnotation {
+  state: string;
+  owner?: string;
+  dueDate?: string;
+  expired?: boolean;
+  findingId?: string;
+  exception?: {
+    approver?: string;
+    rationale?: string;
+    compensating_control?: string;
+    expiry?: string;
+  };
 }
 
 export interface EvidenceRow {

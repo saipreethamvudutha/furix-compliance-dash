@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Sparkles, Crosshair, Link as LinkIcon, Terminal } from "lucide-react";
+import { ChevronDown, ChevronRight, Sparkles, Crosshair, Link as LinkIcon, Terminal, ClipboardCheck } from "lucide-react";
 import type { ComplianceControl, ComplianceFramework } from "@/lib/data/types";
 import { StatusPill } from "./status";
 
@@ -35,6 +35,29 @@ function ControlRow({ control }: { control: ComplianceControl }) {
           <span className="block truncate text-sm font-medium">{control.title}</span>
           <span className="mt-0.5 block truncate text-xs text-slate-500">{control.plainLanguage}</span>
         </span>
+        {control.finding && (
+          <span
+            className={`hidden shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium sm:inline-flex ${
+              control.finding.expired
+                ? "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-300"
+                : control.finding.state === "risk_accepted"
+                  ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                  : "border-slate-400/30 bg-slate-500/10 text-slate-600 dark:text-slate-300"
+            }`}
+            title={
+              control.finding.exception
+                ? `Risk accepted by ${control.finding.exception.approver}, expires ${control.finding.exception.expiry?.slice(0, 10)}`
+                : `Finding: ${control.finding.state}`
+            }
+          >
+            <ClipboardCheck className="h-3 w-3" />
+            {control.finding.expired
+              ? "exception expired"
+              : control.finding.state === "risk_accepted"
+                ? "risk accepted"
+                : control.finding.state.replace("_", " ")}
+          </span>
+        )}
         {attack.length > 0 && (
           <span className="hidden shrink-0 items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 font-mono text-[10px] font-medium text-violet-600 dark:text-violet-300 sm:inline-flex">
             <Crosshair className="h-3 w-3" /> {attack.length} ATT&CK
