@@ -96,8 +96,10 @@ function ControlRow({ control }: { control: ComplianceControl }) {
 }
 
 export function ControlTable({ framework }: { framework: ComplianceFramework }) {
-  // gap first, then in_progress, then met, then n/a — attention at the top.
-  const order: Record<string, number> = { gap: 0, in_progress: 1, met: 2, not_applicable: 3 };
+  // gap first, then unknown, in_progress, met, then unmonitored — attention at the top.
+  const order: Record<string, number> = {
+    gap: 0, unknown: 1, in_progress: 2, met: 3, not_monitored: 4, not_applicable: 5,
+  };
   const controls = [...framework.controls].sort(
     (a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9),
   );
@@ -106,7 +108,8 @@ export function ControlTable({ framework }: { framework: ComplianceFramework }) 
       <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800/50">
         <span className="font-medium">{framework.name}</span>
         <span className="font-mono text-xs text-slate-500">
-          {framework.metControls}/{framework.totalControls} met · {framework.percentage}%
+          {framework.gapControls} at risk · {framework.unknownControls} monitored ·{" "}
+          {framework.coveragePct}% coverage
         </span>
       </div>
       <div>

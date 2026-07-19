@@ -2,7 +2,7 @@
 
 import type { ComplianceFramework } from "@/lib/data/types";
 
-function Donut({ pct, color }: { pct: number; color: string }) {
+function Donut({ pct, label, color }: { pct: number; label: string; color: string }) {
   const angle = Math.max(0, Math.min(100, pct)) * 3.6;
   return (
     <div
@@ -11,17 +11,22 @@ function Donut({ pct, color }: { pct: number; color: string }) {
         background: `conic-gradient(${color} ${angle}deg, rgba(148,163,184,0.22) ${angle}deg 360deg)`,
       }}
     >
-      <div className="absolute inset-[6px] flex items-center justify-center rounded-full bg-[var(--card,#fff)] dark:bg-slate-900">
-        <span className="text-sm font-semibold tabular-nums">{Math.round(pct)}%</span>
+      <div className="absolute inset-[6px] flex flex-col items-center justify-center rounded-full bg-[var(--card,#fff)] dark:bg-slate-900">
+        <span className="text-sm font-semibold tabular-nums leading-none">{Math.round(pct)}%</span>
+        <span className="mt-0.5 text-[8px] uppercase tracking-wide text-slate-400 leading-none">
+          {label}
+        </span>
       </div>
     </div>
   );
 }
 
-function ringColor(pct: number): string {
+// The ring shows COVERAGE (how much we can even see) — the honest headline for
+// detection-only evidence. Risk is shown alongside, never hidden inside it.
+function coverageColor(pct: number): string {
   if (pct >= 80) return "#10b981"; // emerald
   if (pct >= 50) return "#f59e0b"; // amber
-  return "#f43f5e"; // rose
+  return "#94a3b8"; // slate — low coverage is a visibility problem, not a fire
 }
 
 export function FrameworkRings({
@@ -48,14 +53,21 @@ export function FrameworkRings({
                 : "border-slate-200 hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-600"
             }`}
           >
-            <Donut pct={fw.percentage} color={ringColor(fw.percentage)} />
+            <Donut pct={fw.coveragePct} label="coverage" color={coverageColor(fw.coveragePct)} />
             <div className="min-w-0">
               <div className="truncate font-medium">{fw.shortName}</div>
               <div className="mt-0.5 text-xs text-slate-500">
-                {fw.metControls} met · {fw.gapControls} gap · {fw.naControls} n/a
+                <span className={fw.gapControls > 0 ? "font-medium text-rose-600 dark:text-rose-400" : ""}>
+                  {fw.gapControls} at risk
+                </span>
+                {" · "}
+                {fw.unknownControls} monitored
+                {" · "}
+                {fw.notMonitoredControls} unmonitored
               </div>
               <div className="mt-1 text-[11px] uppercase tracking-wide text-slate-400">
                 {fw.totalControls} requirements
+                {fw.atRiskPct !== null && ` · ${fw.atRiskPct}% of monitored at risk`}
               </div>
             </div>
           </button>

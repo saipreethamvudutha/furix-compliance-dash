@@ -10,8 +10,12 @@ export type FrameworkKpi = {
   id: string;
   name: string;
   shortName: string;
-  percentage: number;
+  percentage: number | null;
+  coveragePct: number;
+  atRiskPct: number | null;
   gapControls: number;
+  unknownControls: number;
+  notMonitoredControls: number;
   totalControls: number;
 };
 
@@ -23,6 +27,7 @@ export type ReportSummary = {
   failed_logs: number;
   total_violations: number;
   frameworks: FrameworkKpi[];
+  versions?: Record<string, string>;
   integrity_sha256: string;
 };
 
@@ -39,7 +44,16 @@ export type IngestResult = {
   lines_ingested: number;
   summary: ReportSummary;
   frameworks: ComplianceFramework[];
-  verification: { ok: boolean; checks_run: number };
+  verification: {
+    ok: boolean;
+    /** the exact verification level achieved — the UI must show this, never more */
+    level?:
+      | "NOT_VERIFIED"
+      | "INTEGRITY_VERIFIED"
+      | "ROLLUP_VERIFIED"
+      | "EVALUATION_REPRODUCED";
+    checks_run: number;
+  };
   alerts: Alert[];
 };
 
@@ -50,7 +64,8 @@ export type ReportIndexEntry = {
   total_logs: number;
   successful_logs: number;
   total_violations: number;
-  framework_pct: Record<string, number | null>;
+  /** framework_id → share of monitored requirements at risk (schema 2.0) */
+  framework_at_risk_pct: Record<string, number | null>;
 };
 
 // ── async ingest (background jobs) ──────────────────────────────────────────

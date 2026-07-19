@@ -7,7 +7,20 @@ export type AssetStatus = "healthy" | "warning" | "critical" | "unknown";
 export type AssetType = "server" | "workstation" | "network" | "iot" | "cloud" | "unknown";
 export type DeploymentType = "on-prem" | "cloud" | "hybrid";
 export type DataSensitivity = "public" | "internal" | "confidential" | "restricted";
-export type ControlStatus = "met" | "in_progress" | "gap" | "not_applicable";
+// Honest assurance vocabulary (Assurance Kernel v2):
+//   met           — all mapped assertions positively passed (requires positive
+//                   predicates; unreachable from detection-only evidence)
+//   gap           — violations observed
+//   unknown       — monitored, nothing observed. NOT proof of compliance.
+//   not_monitored — no detection covers it (never disguised as N/A)
+//   not_applicable— an APPROVED applicability decision excludes it
+export type ControlStatus =
+  | "met"
+  | "in_progress"
+  | "gap"
+  | "unknown"
+  | "not_monitored"
+  | "not_applicable";
 export type ActionPriority = "high" | "medium" | "low";
 export type ActionStatus = "pending" | "approved" | "in_progress" | "completed" | "rolled_back";
 export type ScanStatus = "idle" | "running" | "completed" | "failed";
@@ -190,8 +203,15 @@ export interface ComplianceFramework {
   metControls: number;
   inProgressControls: number;
   gapControls: number;
+  unknownControls: number;
+  notMonitoredControls: number;
   naControls: number;
-  percentage: number;
+  /** share of requirements covered by ≥1 monitored control (0–100) */
+  coveragePct: number;
+  /** share of MONITORED requirements with observed violations; null if none monitored */
+  atRiskPct: number | null;
+  /** compliance % — null until positive assertions exist (never a silent 0/100) */
+  percentage: number | null;
   controls: ComplianceControl[];
 }
 
@@ -210,6 +230,9 @@ export interface ComplianceControl {
   description: string;
   plainLanguage: string;
   status: ControlStatus;
+  /** contributing CIS controls actually monitored / total mapped (coverage) */
+  monitoredControls?: number;
+  totalMappedControls?: number;
   systems: { name: string; status: ControlStatus; detail: string }[];
   aiRecommendation?: string;
   attack?: AttackRef[];

@@ -182,6 +182,7 @@ export default function IngestPage() {
             </h2>
             <VerificationBadge
               ok={result.verification.ok}
+              level={result.verification.level}
               checksRun={result.verification.checks_run}
               integrityHash={result.summary.integrity_sha256}
             />

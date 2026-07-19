@@ -28,7 +28,11 @@ async function getComplianceSeed(): Promise<ComplianceFramework[]> {
       metControls: 47,
       inProgressControls: 5,
       gapControls: 8,
+      unknownControls: 0,
+      notMonitoredControls: 0,
       naControls: 0,
+      coveragePct: 100,
+      atRiskPct: 13,
       percentage: 78,
       controls: [
         {
@@ -138,7 +142,11 @@ async function getComplianceSeed(): Promise<ComplianceFramework[]> {
       metControls: 22,
       inProgressControls: 1,
       gapControls: 1,
+      unknownControls: 0,
+      notMonitoredControls: 0,
       naControls: 0,
+      coveragePct: 100,
+      atRiskPct: 4,
       percentage: 92,
       controls: [
         {

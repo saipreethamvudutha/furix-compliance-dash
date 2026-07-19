@@ -26,8 +26,22 @@ export const STATUS_META: Record<
     bg: "bg-amber-500/10 border-amber-500/30",
     ring: "#f59e0b",
   },
-  not_applicable: {
+  unknown: {
+    label: "No violations observed",
+    dot: "bg-sky-500",
+    text: "text-sky-700 dark:text-sky-300",
+    bg: "bg-sky-500/10 border-sky-500/30",
+    ring: "#0ea5e9",
+  },
+  not_monitored: {
     label: "Not monitored",
+    dot: "bg-slate-400",
+    text: "text-slate-600 dark:text-slate-300",
+    bg: "bg-slate-500/10 border-slate-500/25",
+    ring: "#94a3b8",
+  },
+  not_applicable: {
+    label: "N/A (approved)",
     dot: "bg-slate-400",
     text: "text-slate-600 dark:text-slate-300",
     bg: "bg-slate-500/10 border-slate-500/25",
@@ -36,7 +50,7 @@ export const STATUS_META: Record<
 };
 
 export function StatusPill({ status }: { status: ControlStatus }) {
-  const m = STATUS_META[status] ?? STATUS_META.not_applicable;
+  const m = STATUS_META[status] ?? STATUS_META.not_monitored;
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium ${m.bg} ${m.text}`}
