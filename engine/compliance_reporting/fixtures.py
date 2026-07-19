@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-_SCF_VERSION = "2026.1"
+_SCF_VERSION = "2026.2"
 
 
 def _policy_finding(

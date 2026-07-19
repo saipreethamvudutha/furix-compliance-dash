@@ -1,22 +1,39 @@
 """
 verifier.py
 ===========
-Independent verification of a compliance report against the raw batch it was
-built from. The point: you should not have to trust the report builder —
-this module recomputes the report's claims through a deliberately separate,
-simpler code path and cross-checks them.
+Independent verification of a compliance report, with named verification
+levels (FUR-CMP-003). The point: you should not have to trust the report
+builder — this module recomputes the report's claims through a deliberately
+separate, simpler code path and cross-checks them. It also enforces the
+assurance gates: no PASS/compliant state may exist without a positive
+predicate (none exist in the current detection-only rule pack), and silence
+may never promote posture.
 
-Five families of checks, each yielding coded failures:
+Verification levels — the result reports exactly what was achieved:
+
+  NOT_VERIFIED            verification did not complete
+  INTEGRITY_VERIFIED      hashes, references and structure reconcile
+                          (report alone — no batch available)
+  ROLLUP_VERIFIED         + statuses and counters independently recomputed
+                          from the stored batch's assertion results
+  EVALUATION_REPRODUCED   + an injected analyzer re-ran the versioned
+                          evaluation from the raw log lines and produced the
+                          same content hash
+
+Check families, each yielding coded failures:
 
   STRUCT-*   required keys/types exist (a minimal structural schema)
   REF-*      referential integrity (every id points at something real)
+  GATE-*     assurance gates (no unsupported pass; silence never promotes)
   RECOMP-*   independent recomputation of statuses/counters/percentages
   CONS-*     conservation laws (totals reconcile end to end)
   HASH-*     integrity hash and deterministic report_id recompute
+  REPRO-*    full evaluation reproduction from raw logs (level 3 only)
 
 Usage:
     result = verify_report(report, batch)
     result.ok        → bool
+    result.level     → achieved verification level string
     result.failures  → [(code, message), ...]
     result.checks_run → int
 """
@@ -27,21 +44,37 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from .registry import CONTROL_CATALOG, TEST_CATALOG, TESTS_BY_CONTROL
 from .report_builder import (
     _UUID_NAMESPACE,
+    VOLATILE_KEYS,
     canonical_json,
     is_failed_result,
     normalize_batch,
+    rollup_requirement_status,
 )
+
+LEVEL_NOT_VERIFIED = "NOT_VERIFIED"
+LEVEL_INTEGRITY = "INTEGRITY_VERIFIED"
+LEVEL_ROLLUP = "ROLLUP_VERIFIED"
+LEVEL_REPRODUCED = "EVALUATION_REPRODUCED"
+
+# Human copy for each level — the dashboard shows THIS, never an overclaim.
+LEVEL_DESCRIPTIONS = {
+    LEVEL_NOT_VERIFIED: "verification did not complete",
+    LEVEL_INTEGRITY: "hashes and references reconcile",
+    LEVEL_ROLLUP: "statuses and counters independently recomputed from stored findings",
+    LEVEL_REPRODUCED: "evaluation independently re-run from raw evidence",
+}
 
 
 @dataclass
 class VerificationResult:
     checks_run: int = 0
     failures: list[tuple[str, str]] = field(default_factory=list)
+    level: str = LEVEL_NOT_VERIFIED
 
     @property
     def ok(self) -> bool:
@@ -54,7 +87,10 @@ class VerificationResult:
 
     def summary(self) -> str:
         status = "PASSED" if self.ok else "FAILED"
-        lines = [f"Verification {status} — {self.checks_run} checks, {len(self.failures)} failure(s)"]
+        lines = [
+            f"Verification {status} [{self.level}] — "
+            f"{self.checks_run} checks, {len(self.failures)} failure(s)"
+        ]
         lines.extend(f"  ✗ [{code}] {msg}" for code, msg in self.failures)
         return "\n".join(lines)
 
@@ -80,10 +116,8 @@ def _recompute_from_batch(batch: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
             if pf.get("finding_uuid"):
                 finding_uuids.add(pf["finding_uuid"])
 
-    test_status = {
-        t: ("fail" if n else ("pass" if ok_entries else "no_data"))
-        for t, n in fired.items()
-    }
+    # Detection-only semantics: fired → fail, else unknown. NEVER pass.
+    test_status = {t: ("fail" if n else "unknown") for t, n in fired.items()}
 
     control_status: dict[str, str] = {}
     for ctrl in CONTROL_CATALOG:
@@ -93,7 +127,7 @@ def _recompute_from_batch(batch: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         elif any(test_status[t] == "fail" for t in mapped):
             control_status[ctrl] = "at_risk"
         else:
-            control_status[ctrl] = "compliant"
+            control_status[ctrl] = "unknown"
 
     return {
         "total_logs": len(entries),
@@ -107,18 +141,13 @@ def _recompute_from_batch(batch: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-# ── public API ────────────────────────────────────────────────────────────────
-def verify_report(
-    report: Mapping[str, Any], batch: Iterable[Mapping[str, Any]]
-) -> VerificationResult:
-    v = VerificationResult()
-
-    # ── STRUCT: shape ─────────────────────────────────────────────────────────
-    for key in ("schema_version", "batch", "summary", "tests", "controls",
-                "frameworks", "integrity", "report_id", "generated_at"):
+def _verify_structure(v: VerificationResult, report: Mapping[str, Any]) -> bool:
+    """STRUCT + REF + GATE + HASH checks — possible from the report alone."""
+    for key in ("schema_version", "versions", "batch", "summary", "tests",
+                "controls", "frameworks", "integrity", "report_id", "generated_at"):
         v.check("STRUCT-KEY", key in report, f"missing top-level key: {key}")
     if not v.ok:
-        return v  # can't meaningfully continue on a malformed document
+        return False  # can't meaningfully continue on a malformed document
 
     tests = report["tests"]
     controls = report["controls"]
@@ -153,8 +182,51 @@ def verify_report(
             v.check("REF-FW-CTRL", not unknown,
                     f"{fw['framework_id']}:{req['requirement_id']} cites unknown controls {unknown}")
 
-    # ── RECOMP: independent recomputation ─────────────────────────────────────
+    # ── GATE: assurance gates (FUR-CMP-001/006) ───────────────────────────────
+    # No test may claim "pass" without a positive predicate. The current rule
+    # pack is detection-only, so ANY pass is an unsupported claim.
+    for t in tests:
+        if t.get("evaluation_mode", "detection_only") == "detection_only":
+            v.check("GATE-NO-PASS", t["status"] != "pass",
+                    f"{t['test_id']} claims 'pass' but is a detection-only rule "
+                    "with no positive predicate")
+    # No control may claim "compliant" unless every mapped test passed.
+    tests_by_id = {t["test_id"]: t for t in tests}
+    for c in controls:
+        if c["status"] == "compliant":
+            mapped = TESTS_BY_CONTROL.get(c["control_id"], ())
+            all_pass = bool(mapped) and all(
+                tests_by_id[t]["status"] == "pass" for t in mapped if t in tests_by_id
+            )
+            v.check("GATE-NO-COMPLIANT", all_pass,
+                    f"{c['control_id']} claims 'compliant' without all mapped tests passing")
+    # No requirement may outrank its contributors (silence never promotes).
+    ctrl_status_map = {c["control_id"]: c["status"] for c in controls}
+    for fw in frameworks:
+        for req in fw["requirements"]:
+            statuses = [ctrl_status_map[c] for c in req["via_controls"] if c in ctrl_status_map]
+            v.check("GATE-REQ-ROLLUP",
+                    req["status"] == rollup_requirement_status(statuses),
+                    f"{fw['framework_id']}:{req['requirement_id']} status "
+                    f"{req['status']!r} not derivable from contributors {statuses}")
+
+    # ── HASH: integrity + deterministic id ────────────────────────────────────
+    payload = {k: report[k] for k in report if k not in VOLATILE_KEYS}
+    expected_hash = _sha256_of(payload)
+    v.check("HASH-CONTENT", report["integrity"]["content_sha256"] == expected_hash,
+            "integrity.content_sha256 does not match recomputed content hash")
+    v.check("HASH-REPORT-ID",
+            report["report_id"] == str(uuid.uuid5(_UUID_NAMESPACE, expected_hash)),
+            "report_id is not uuid5(namespace, content_sha256)")
+    return True
+
+
+def _verify_rollup(
+    v: VerificationResult, report: Mapping[str, Any], batch: Iterable[Mapping[str, Any]]
+) -> None:
+    """RECOMP + CONS checks — requires the stored batch."""
     truth = _recompute_from_batch(batch)
+    tests, controls, frameworks = report["tests"], report["controls"], report["frameworks"]
 
     b = report["batch"]
     v.check("RECOMP-LOGS", b["total_logs"] == truth["total_logs"],
@@ -184,32 +256,43 @@ def verify_report(
         v.check("RECOMP-CTRL-S", c["status"] == truth["control_status"][cid],
                 f"{cid} status {c['status']!r} != recomputed {truth['control_status'][cid]!r}")
 
-    # framework percentages recompute from the report's own requirement rows,
-    # then requirement statuses recompute from control statuses
-    ctrl_status_map = {c["control_id"]: c["status"] for c in controls}
+    # framework counters + posture tuple recompute from the report's own rows
     for fw in frameworks:
-        compliant = at_risk = unmonitored = 0
+        counts = {"compliant": 0, "at_risk": 0, "unknown": 0, "not_monitored": 0}
+        monitored_reqs = 0
         for req in fw["requirements"]:
-            statuses = [ctrl_status_map[c] for c in req["via_controls"]]
-            if any(s == "at_risk" for s in statuses):
-                expected = "at_risk"
-            elif any(s == "compliant" for s in statuses):
-                expected = "compliant"
-            else:
-                expected = "not_monitored"
-            v.check("RECOMP-REQ-S", req["status"] == expected,
-                    f"{fw['framework_id']}:{req['requirement_id']} status {req['status']!r} != derived {expected!r}")
-            compliant += req["status"] == "compliant"
-            at_risk += req["status"] == "at_risk"
-            unmonitored += req["status"] == "not_monitored"
+            counts[req["status"]] = counts.get(req["status"], 0) + 1
+            if req["status"] != "not_monitored":
+                monitored_reqs += 1
+            expected_cov = sum(
+                1 for c in req["via_controls"]
+                if truth["control_status"].get(c, "not_monitored") != "not_monitored"
+            )
+            v.check("RECOMP-REQ-COV", req["monitored_controls"] == expected_cov,
+                    f"{fw['framework_id']}:{req['requirement_id']} monitored_controls "
+                    f"{req['monitored_controls']} != recomputed {expected_cov}")
 
         v.check("RECOMP-FW-N",
                 (fw["requirements_compliant"], fw["requirements_at_risk"],
-                 fw["requirements_not_monitored"], fw["requirements_total"])
-                == (compliant, at_risk, unmonitored, len(fw["requirements"])),
+                 fw["requirements_unknown"], fw["requirements_not_monitored"],
+                 fw["requirements_total"])
+                == (counts["compliant"], counts["at_risk"], counts["unknown"],
+                    counts["not_monitored"], len(fw["requirements"])),
                 f"{fw['framework_id']} requirement counters do not reconcile")
-        monitored = compliant + at_risk
-        expected_pct = round(100.0 * compliant / monitored, 1) if monitored else None
+
+        total = len(fw["requirements"])
+        expected_coverage = round(100.0 * monitored_reqs / total, 1) if total else 0.0
+        v.check("RECOMP-FW-COV", fw["coverage_pct"] == expected_coverage,
+                f"{fw['framework_id']} coverage_pct {fw['coverage_pct']} != recomputed {expected_coverage}")
+        expected_at_risk = (
+            round(100.0 * counts["at_risk"] / monitored_reqs, 1) if monitored_reqs else None
+        )
+        v.check("RECOMP-FW-RISK", fw["at_risk_pct"] == expected_at_risk,
+                f"{fw['framework_id']} at_risk_pct {fw['at_risk_pct']} != recomputed {expected_at_risk}")
+        expected_pct = (
+            round(100.0 * counts["compliant"] / monitored_reqs, 1)
+            if counts["compliant"] else None
+        )
         v.check("RECOMP-FW-PCT", fw["compliance_pct"] == expected_pct,
                 f"{fw['framework_id']} compliance_pct {fw['compliance_pct']} != recomputed {expected_pct}")
 
@@ -224,18 +307,70 @@ def verify_report(
     v.check("CONS-AT-RISK",
             set(s["controls_at_risk"]) == {c for c, st in truth["control_status"].items() if st == "at_risk"},
             "summary.controls_at_risk does not match recomputed at-risk set")
+    v.check("CONS-UNKNOWN",
+            set(s["controls_unknown"]) == {c for c, st in truth["control_status"].items() if st == "unknown"},
+            "summary.controls_unknown does not match recomputed unknown set")
 
-    # ── HASH: integrity + deterministic id ────────────────────────────────────
-    payload = {k: report[k] for k in report
-               if k not in ("integrity", "report_id", "generated_at")}
-    expected_hash = _sha256_of(payload)
-    v.check("HASH-CONTENT", report["integrity"]["content_sha256"] == expected_hash,
-            "integrity.content_sha256 does not match recomputed content hash")
-    v.check("HASH-REPORT-ID",
-            report["report_id"] == str(uuid.uuid5(_UUID_NAMESPACE, expected_hash)),
-            "report_id is not uuid5(namespace, content_sha256)")
+
+# ── public API ────────────────────────────────────────────────────────────────
+def verify_report(
+    report: Mapping[str, Any],
+    batch: Iterable[Mapping[str, Any]] | None = None,
+    *,
+    raw_logs: Sequence_or_None = None,
+    reanalyzer: Callable[[str, str], Mapping[str, Any]] | None = None,
+    registry: Any = None,
+) -> VerificationResult:
+    """
+    Verify a report to the deepest level the available inputs allow:
+
+      report only                → INTEGRITY_VERIFIED
+      + batch                    → ROLLUP_VERIFIED
+      + raw_logs and reanalyzer  → EVALUATION_REPRODUCED (re-runs the
+                                   evaluation and compares content hashes)
+
+    The achieved level is on result.level; failures downgrade to NOT_VERIFIED.
+    """
+    v = VerificationResult()
+
+    if not _verify_structure(v, report):
+        return v  # missing top-level keys — nothing else is checkable
+
+    # Run every applicable check family even after failures: a tampered report
+    # should yield the FULL diagnostic picture, not just the first mismatch.
+    if batch is not None:
+        _verify_rollup(v, report, batch)
+
+    if not v.ok:
+        v.level = LEVEL_NOT_VERIFIED
+        return v
+    v.level = LEVEL_ROLLUP if batch is not None else LEVEL_INTEGRITY
+    if batch is None:
+        return v
+
+    if raw_logs is not None and reanalyzer is not None:
+        from .report_builder import build_report  # local import to avoid cycle at module load
+        from .registry import FrameworkRegistry
+        # The crosswalk is part of the hashed payload — reproduction must use
+        # the SAME registry the original report was built with.
+        reproduced = build_report(
+            [{"log_type": lt, "result": dict(reanalyzer(raw, lt))} for lt, raw in raw_logs],
+            registry=registry or FrameworkRegistry.from_snapshot(),
+            generated_at=report["generated_at"],
+        )
+        v.check("REPRO-HASH",
+                reproduced["integrity"]["content_sha256"] == report["integrity"]["content_sha256"],
+                "re-evaluated content hash differs from the report under verification")
+        if v.ok:
+            v.level = LEVEL_REPRODUCED
+        else:
+            v.level = LEVEL_NOT_VERIFIED
 
     return v
+
+
+# typing helper (kept simple to avoid importing typing.Sequence at call sites)
+Sequence_or_None = Any
 
 
 def _sha256_of(obj: Any) -> str:

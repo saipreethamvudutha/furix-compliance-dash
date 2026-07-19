@@ -44,8 +44,12 @@ def test_test_statuses():
     assert by_id["POL-001"]["status"] == "fail" and by_id["POL-001"]["occurrences"] == 1
     assert by_id["POL-006"]["status"] == "fail"
     assert by_id["POL-004"]["status"] == "fail"
-    assert by_id["POL-003"]["status"] == "pass"       # evaluated, never fired
-    assert by_id["POL-014"]["status"] == "pass"
+    # FUR-CMP-001: a detector that did not fire is UNKNOWN, never "pass" —
+    # silence is not positive evidence.
+    assert by_id["POL-003"]["status"] == "unknown"
+    assert by_id["POL-003"]["status_reason"] == "not_observed"
+    assert by_id["POL-014"]["status"] == "unknown"
+    assert all(t["evaluation_mode"] == "detection_only" for t in r["tests"])
     assert len(by_id) == len(TEST_CATALOG)
 
 
@@ -55,9 +59,9 @@ def test_control_statuses():
     # at risk via fired rules
     for ctrl in ("Control 5", "Control 6", "Control 8", "Control 10", "Control 12", "Control 15"):
         assert by_id[ctrl]["status"] == "at_risk", ctrl
-    # monitored and clean
+    # monitored with nothing observed — UNKNOWN, not compliant (FUR-CMP-001)
     for ctrl in ("Control 3", "Control 4", "Control 7", "Control 13", "Control 17"):
-        assert by_id[ctrl]["status"] == "compliant", ctrl
+        assert by_id[ctrl]["status"] == "unknown", ctrl
     # no policy rule covers these — reported honestly
     for ctrl in ("Control 1", "Control 2", "Control 9", "Control 11",
                  "Control 14", "Control 16", "Control 18"):
@@ -70,16 +74,25 @@ def test_control_statuses():
 def test_framework_rollup_math():
     r = _report()
     for fw in r["frameworks"]:
-        monitored = fw["requirements_compliant"] + fw["requirements_at_risk"]
+        monitored = fw["requirements_total"] - fw["requirements_not_monitored"]
         assert (
             fw["requirements_total"]
-            == monitored + fw["requirements_not_monitored"]
+            == fw["requirements_compliant"] + fw["requirements_at_risk"]
+            + fw["requirements_unknown"] + fw["requirements_not_monitored"]
             == len(fw["requirements"])
         )
+        # posture tuple math (FUR-CMP-006)
+        assert fw["coverage_pct"] == round(100.0 * monitored / fw["requirements_total"], 1)
         if monitored:
-            assert fw["compliance_pct"] == round(100.0 * fw["requirements_compliant"] / monitored, 1)
+            assert fw["at_risk_pct"] == round(100.0 * fw["requirements_at_risk"] / monitored, 1)
         else:
-            assert fw["compliance_pct"] is None
+            assert fw["at_risk_pct"] is None
+        # no positive assertions exist → compliance_pct must be None, never 0/100
+        assert fw["requirements_compliant"] == 0
+        assert fw["compliance_pct"] is None
+        # every requirement carries contributor coverage
+        for req in fw["requirements"]:
+            assert 0 <= req["monitored_controls"] <= req["total_controls"]
     cis = next(fw for fw in r["frameworks"] if fw["framework_id"] == "cis_v8")
     assert cis["requirements_total"] == len(CONTROL_CATALOG)
     assert cis["requirements_at_risk"] == 6
@@ -91,6 +104,55 @@ def test_framework_rollup_math():
     req_ids = {req["requirement_id"] for req in pci["requirements"]}
     assert "Req 9" not in req_ids
     assert pci["requirements_at_risk"] > 0  # Req 8 etc. inherit at-risk Control 5/6
+
+
+# ── golden acceptance gates (Wave 0 exit criteria) ────────────────────────────
+def test_golden_unrelated_log_produces_zero_pass():
+    """FUR-CMP-001 acceptance gate: a single benign, unrelated log must not
+    make ANY test pass, ANY control compliant, or ANY requirement satisfied."""
+    benign_only = [e for e in demo_batch() if e["log_type"] == "benign_network"]
+    r = build_report(benign_only, registry=_REGISTRY, generated_at=_GEN_AT)
+    assert all(t["status"] != "pass" for t in r["tests"])
+    assert all(c["status"] != "compliant" for c in r["controls"])
+    for fw in r["frameworks"]:
+        assert fw["requirements_compliant"] == 0
+        assert fw["compliance_pct"] is None
+        assert all(req["status"] != "compliant" for req in fw["requirements"])
+    # and the verifier's GATE checks agree
+    assert verify_report(r, benign_only).ok
+
+
+def test_golden_silence_never_increases_posture():
+    """Removing violations (silence) may move controls at_risk → unknown,
+    but must never move anything to compliant."""
+    from .fixtures import demo_batch_remediated
+    r = build_report(demo_batch_remediated(), registry=_REGISTRY, generated_at=_GEN_AT)
+    assert all(c["status"] in ("at_risk", "unknown", "not_monitored") for c in r["controls"])
+    assert sum(1 for c in r["controls"] if c["status"] == "compliant") == 0
+
+
+def test_golden_verifier_rejects_forged_pass():
+    """A tampered report claiming pass/compliant must fail the GATE checks
+    even if an attacker recomputes downstream counters."""
+    batch = demo_batch()
+    report = build_report(batch, registry=_REGISTRY, generated_at=_GEN_AT)
+    forged = copy.deepcopy(report)
+    t = next(t for t in forged["tests"] if t["status"] == "unknown")
+    t["status"] = "pass"
+    res = verify_report(forged, batch)
+    assert not res.ok
+    assert any(code in ("GATE-NO-PASS", "RECOMP-TEST-S", "HASH-CONTENT")
+               for code, _ in res.failures)
+
+
+def test_golden_version_manifest_stamped():
+    """FUR-CMP-017/019: one pinned manifest appears in every report and the
+    engine version cannot disagree with it."""
+    from .versions import VERSION_MANIFEST
+    r = _report()
+    assert r["versions"]["scf"] == VERSION_MANIFEST["scf"] == "2026.2"
+    assert r["versions"]["engine"] == r["engine_version"]
+    assert r["schema_version"] == VERSION_MANIFEST["report_schema"]
 
 
 def test_mixed_input_shapes_are_equivalent():
@@ -106,13 +168,19 @@ def test_mixed_input_shapes_are_equivalent():
 def test_empty_and_all_failed_batches():
     empty = build_report([], registry=_REGISTRY, generated_at=_GEN_AT)
     assert empty["batch"]["total_logs"] == 0
-    assert all(t["status"] == "no_data" for t in empty["tests"])
+    assert all(
+        t["status"] == "unknown" and t["status_reason"] == "no_data"
+        for t in empty["tests"]
+    )
     assert verify_report(empty, []).ok
 
     failed_only = [e for e in demo_batch() if e["result"]["_failure_stage"]]
     r = build_report(failed_only, registry=_REGISTRY, generated_at=_GEN_AT)
     assert r["batch"]["successful_logs"] == 0
-    assert all(t["status"] == "no_data" for t in r["tests"])
+    assert all(
+        t["status"] == "unknown" and t["status_reason"] == "no_data"
+        for t in r["tests"]
+    )
     assert verify_report(r, failed_only).ok
 
 
@@ -256,15 +324,16 @@ def test_diff_detects_improvements_and_persistence():
     old, new = _two_reports()
     d = diff_reports(old, new)
     improved_ids = {r["control_id"] for r in d["controls"]["improved"]}
-    # cloud takeover + malware remediated
+    # cloud takeover + malware no longer observed → at_risk → unknown = improved
     for ctrl in ("Control 5", "Control 8", "Control 10", "Control 12", "Control 15"):
         assert ctrl in improved_ids, ctrl
     # brute-force persists → Control 6 still at risk
     assert {r["control_id"] for r in d["controls"]["still_at_risk"]} == {"Control 6"}
     assert d["violations"]["delta"] == 1 - 6
-    assert {t["test_id"] for t in d["tests"]["newly_passing"]} >= {"POL-001", "POL-006"}
+    assert {t["test_id"] for t in d["tests"]["newly_resolved"]} >= {"POL-001", "POL-006"}
     hipaa = next(f for f in d["frameworks"] if f["framework_id"] == "hipaa_security_rule")
-    assert hipaa["direction"] == "improved"       # 0% → 50%
+    assert hipaa["metric"] == "at_risk_pct"
+    assert hipaa["direction"] == "improved"       # at-risk share fell
 
 
 def test_diff_reverse_direction_yields_regression_alerts():

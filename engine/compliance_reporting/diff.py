@@ -5,9 +5,13 @@ Deterministic comparison of two compliance reports — the "did we get better
 or worse?" engine, and the source of regression alerts.
 
 diff_reports(old, new) answers, with stable ordering:
-  * per framework: old %, new %, delta, direction
+  * per framework: old/new at_risk_pct + coverage_pct, delta, direction
+                   (at-risk going UP is a regression — there is no
+                   "compliance %" to compare in detection-only evidence)
   * per control:   regressed / improved / still_at_risk / newly_monitored
-  * per test:      newly_failing / newly_passing
+                   (improved = at_risk → unknown/compliant: violations no
+                   longer observed, NOT proof the control now operates)
+  * per test:      newly_failing / newly_resolved
   * violations:    totals and delta
 
 alerts_from_diff(diff) turns regressions into structured alert dicts —
@@ -21,7 +25,9 @@ from typing import Any, Mapping
 
 from .history import check_report_integrity
 
-_AT_RISK, _COMPLIANT, _NOT_MONITORED = "at_risk", "compliant", "not_monitored"
+_AT_RISK, _COMPLIANT, _UNKNOWN, _NOT_MONITORED = (
+    "at_risk", "compliant", "unknown", "not_monitored",
+)
 
 
 def _by_id(rows: list[dict[str, Any]], key: str) -> dict[str, dict[str, Any]]:
@@ -46,19 +52,23 @@ def diff_reports(
     new_fw = _by_id(new["frameworks"], "framework_id")
     frameworks: list[dict[str, Any]] = []
     for fw_id in sorted(set(old_fw) | set(new_fw)):
-        o = old_fw.get(fw_id, {}).get("compliance_pct")
-        n = new_fw.get(fw_id, {}).get("compliance_pct")
+        o = old_fw.get(fw_id, {}).get("at_risk_pct")
+        n = new_fw.get(fw_id, {}).get("at_risk_pct")
         if o is None or n is None:
             delta, direction = None, "no_data"
         else:
             delta = round(n - o, 1)
-            direction = "improved" if delta > 0 else ("regressed" if delta < 0 else "unchanged")
+            # at_risk_pct RISING is a regression
+            direction = "regressed" if delta > 0 else ("improved" if delta < 0 else "unchanged")
         frameworks.append(
             {
                 "framework_id": fw_id,
                 "name": (new_fw.get(fw_id) or old_fw.get(fw_id, {})).get("name", fw_id),
+                "metric": "at_risk_pct",
                 "old_pct": o,
                 "new_pct": n,
+                "old_coverage_pct": old_fw.get(fw_id, {}).get("coverage_pct"),
+                "new_coverage_pct": new_fw.get(fw_id, {}).get("coverage_pct"),
                 "delta": delta,
                 "direction": direction,
             }
@@ -81,20 +91,22 @@ def diff_reports(
         }
         if n == _AT_RISK and o != _AT_RISK:
             regressed.append(row)
-        elif o == _AT_RISK and n == _COMPLIANT:
+        elif o == _AT_RISK and n in (_UNKNOWN, _COMPLIANT):
+            # violations no longer observed (unknown) or positively passing
+            # (compliant, future) — either way, better than at_risk
             improved.append(row)
         elif o == _AT_RISK and n == _AT_RISK:
             still_at_risk.append(row)
-        elif o == _NOT_MONITORED and n in (_COMPLIANT, _AT_RISK):
+        elif o == _NOT_MONITORED and n != _NOT_MONITORED:
             newly_monitored.append(row)
 
     # ── tests ─────────────────────────────────────────────────────────────────
     old_tests = _by_id(old["tests"], "test_id")
     new_tests = _by_id(new["tests"], "test_id")
-    newly_failing, newly_passing = [], []
+    newly_failing, newly_resolved = [], []
     for tid in sorted(set(old_tests) | set(new_tests)):
-        o = old_tests.get(tid, {}).get("status", "no_data")
-        n = new_tests.get(tid, {}).get("status", "no_data")
+        o = old_tests.get(tid, {}).get("status", "unknown")
+        n = new_tests.get(tid, {}).get("status", "unknown")
         row = {
             "test_id": tid,
             "title": (new_tests.get(tid) or old_tests.get(tid, {})).get("title", ""),
@@ -105,8 +117,8 @@ def diff_reports(
         }
         if n == "fail" and o != "fail":
             newly_failing.append(row)
-        elif o == "fail" and n == "pass":
-            newly_passing.append(row)
+        elif o == "fail" and n in ("unknown", "pass"):
+            newly_resolved.append(row)
 
     old_v = old["summary"]["total_violations"]
     new_v = new["summary"]["total_violations"]
@@ -123,7 +135,7 @@ def diff_reports(
             "still_at_risk": still_at_risk,
             "newly_monitored": newly_monitored,
         },
-        "tests": {"newly_failing": newly_failing, "newly_passing": newly_passing},
+        "tests": {"newly_failing": newly_failing, "newly_resolved": newly_resolved},
         "violations": {"old_total": old_v, "new_total": new_v, "delta": new_v - old_v},
         "summary_line": _summary_line(frameworks, regressed, improved, old_v, new_v),
     }
@@ -132,7 +144,9 @@ def diff_reports(
 def _summary_line(frameworks, regressed, improved, old_v, new_v) -> str:
     moved = [f for f in frameworks if f["direction"] in ("improved", "regressed")]
     fw_bit = (
-        "; ".join(f"{f['framework_id']} {f['old_pct']}%→{f['new_pct']}%" for f in moved)
+        "; ".join(
+            f"{f['framework_id']} at-risk {f['old_pct']}%→{f['new_pct']}%" for f in moved
+        )
         or "framework posture unchanged"
     )
     return (
@@ -179,7 +193,7 @@ def alerts_from_diff(
                     "severity": "high",
                     "framework_id": fw["framework_id"],
                     "message": (
-                        f"{fw['name']} compliance dropped "
+                        f"{fw['name']} at-risk share rose "
                         f"{fw['old_pct']}% → {fw['new_pct']}% ({fw['delta']:+.1f})"
                     ),
                 }
@@ -214,7 +228,7 @@ def render_diff_text(diff: Mapping[str, Any]) -> str:
     for fw in diff["frameworks"]:
         arrow = {"improved": "▲", "regressed": "▼", "unchanged": "—", "no_data": "·"}[fw["direction"]]
         lines.append(
-            f"  {arrow} {fw['name']:<24} {fw['old_pct']}% → {fw['new_pct']}%"
+            f"  {arrow} {fw['name']:<24} at-risk {fw['old_pct']}% → {fw['new_pct']}%"
         )
     for label, rows in (
         ("REGRESSED", diff["controls"]["regressed"]),
@@ -227,6 +241,6 @@ def render_diff_text(diff: Mapping[str, Any]) -> str:
             )
     for row in diff["tests"]["newly_failing"]:
         lines.append(f"  [NEW FAIL] {row['test_id']} {row['title']} ×{row['occurrences']}")
-    for row in diff["tests"]["newly_passing"]:
-        lines.append(f"  [NOW PASS] {row['test_id']} {row['title']}")
+    for row in diff["tests"]["newly_resolved"]:
+        lines.append(f"  [RESOLVED] {row['test_id']} {row['title']}")
     return "\n".join(lines)

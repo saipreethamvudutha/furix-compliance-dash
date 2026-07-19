@@ -51,7 +51,10 @@ class IndexEntry:
     total_logs: int
     successful_logs: int
     total_violations: int
-    framework_pct: dict[str, float | None]  # framework_id -> compliance_pct
+    # framework_id -> at_risk_pct (share of MONITORED requirements with
+    # observed violations). Schema 1.x stored compliance_pct here — the field
+    # is renamed so the trend can never be misread as a compliance score.
+    framework_at_risk_pct: dict[str, float | None]
 
     @property
     def sort_key(self) -> tuple[str, str, str]:
@@ -68,20 +71,26 @@ class IndexEntry:
             "total_logs": self.total_logs,
             "successful_logs": self.successful_logs,
             "total_violations": self.total_violations,
-            "framework_pct": self.framework_pct,
+            "framework_at_risk_pct": self.framework_at_risk_pct,
         }
 
     @classmethod
     def from_report(cls, report: Mapping[str, Any]) -> "IndexEntry":
+        # window moved to run_metadata in schema 2.0 (volatile, outside the
+        # content hash); fall back to the 1.x location for stored reports.
+        window = (
+            (report.get("run_metadata") or {}).get("window")
+            or (report["batch"].get("window") or {})
+        )
         return cls(
             report_id=report["report_id"],
             generated_at=report["generated_at"],
-            window_end=(report["batch"].get("window") or {}).get("last_run_timestamp") or "",
+            window_end=window.get("last_run_timestamp") or "",
             total_logs=report["batch"]["total_logs"],
             successful_logs=report["batch"]["successful_logs"],
             total_violations=report["summary"]["total_violations"],
-            framework_pct={
-                fw["framework_id"]: fw["compliance_pct"] for fw in report["frameworks"]
+            framework_at_risk_pct={
+                fw["framework_id"]: fw.get("at_risk_pct") for fw in report["frameworks"]
             },
         )
 
@@ -98,9 +107,8 @@ def check_report_integrity(report: Mapping[str, Any]) -> None:
     except (KeyError, TypeError) as exc:
         raise IntegrityError(f"report is missing integrity fields: {exc}") from exc
 
-    payload = {
-        k: report[k] for k in report if k not in ("integrity", "report_id", "generated_at")
-    }
+    from .report_builder import VOLATILE_KEYS  # single source for hash exclusions
+    payload = {k: report[k] for k in report if k not in VOLATILE_KEYS}
     actual_hash = _sha256_of(payload)
     if actual_hash != claimed_hash:
         raise IntegrityError(
@@ -214,7 +222,9 @@ class ReportStore:
                 total_logs=d["total_logs"],
                 successful_logs=d["successful_logs"],
                 total_violations=d["total_violations"],
-                framework_pct=d["framework_pct"],
+                # accept 1.x lines ("framework_pct") from stores written
+                # before the rename; values are surfaced under the new key
+                framework_at_risk_pct=d.get("framework_at_risk_pct", d.get("framework_pct", {})),
             )
         return sorted(rows.values(), key=lambda e: e.sort_key)
 
