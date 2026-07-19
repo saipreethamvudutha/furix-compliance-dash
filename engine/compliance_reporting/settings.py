@@ -8,11 +8,14 @@ configuration (the dev/test path).
 
 Env vars (all optional):
   FURIX_REPORT_STORE        path to the report store           (default: _report_store)
-  FURIX_ENGINE_VERSION      version string stamped into reports (default: 2.1.0)
   FURIX_ALERT_JSONL         path to append alert audit records  (default: <store>/alerts.jsonl)
   FURIX_ALERT_WEBHOOK       https URL for regression alerts     (default: unset → no webhook)
   FURIX_WEBHOOK_ALLOW_HTTP  "1" to permit non-https webhooks    (default: off)
   FURIX_FRAMEWORK_DROP_PCT  framework drop that triggers alert  (default: 5.0)
+
+The engine version is deliberately NOT env-overridable (FUR-CMP-019): a
+version is a property of the build, not of the deployment, and every report,
+export and API banner must agree on one manifest.
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-ENGINE_VERSION = os.environ.get("FURIX_ENGINE_VERSION", "2.1.0")
+from .versions import ENGINE_VERSION
 
 
 @dataclass(frozen=True)

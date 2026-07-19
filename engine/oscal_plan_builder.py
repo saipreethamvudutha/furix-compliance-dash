@@ -47,10 +47,16 @@ from datetime import datetime, timezone
 
 from config import OUTPUT_DIR
 
-_SCF_VERSION   = "2026.1"
-_OSCAL_VERSION = "1.1.2"
+# Single version source (FUR-CMP-017)
+try:
+    from compliance_reporting.versions import (
+        ENGINE_VERSION as _TOOL_VERSION,
+        OSCAL_VERSION as _OSCAL_VERSION,
+        SCF_VERSION as _SCF_VERSION,
+    )
+except ImportError:
+    _SCF_VERSION, _OSCAL_VERSION, _TOOL_VERSION = "2026.2", "1.1.2", "2.2.0"
 _TOOL_NAME     = "Furix Deterministic Compliance Pipeline"
-_TOOL_VERSION  = "2.0.0"
 
 
 def _uuid() -> str:
