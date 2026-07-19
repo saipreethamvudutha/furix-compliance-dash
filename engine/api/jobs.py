@@ -56,11 +56,21 @@ class Job:
 
 
 class JobManager:
-    def __init__(self) -> None:
+    def __init__(self, durable_path: str | None = None) -> None:
         self._jobs: dict[str, Job] = {}
         self._order: list[str] = []
         self._lock = threading.Lock()
         self._queue: "Queue[tuple[str, WorkFn]]" = Queue()
+        # Optional durable backing (FUR-OPS-001): job records survive a restart.
+        # Set FURIX_JOB_DB (or pass durable_path) to enable; on startup, jobs a
+        # crash left mid-flight are recovered as errored.
+        import os  # noqa: PLC0415
+        path = durable_path or os.environ.get("FURIX_JOB_DB")
+        self._durable = None
+        if path:
+            from .sqlite_store import DurableJobStore  # noqa: PLC0415
+            self._durable = DurableJobStore(path)
+            self._durable.recover_stuck(time.time())
         self._worker = threading.Thread(target=self._loop, daemon=True)
         self._worker.start()
 
@@ -68,9 +78,12 @@ class JobManager:
     def submit(self, work: WorkFn, owner: str | None = None) -> str:
         job_id = uuid.uuid4().hex[:16]
         with self._lock:
-            self._jobs[job_id] = Job(id=job_id, owner=owner)
+            job = Job(id=job_id, owner=owner)
+            self._jobs[job_id] = job
             self._order.append(job_id)
             self._evict_locked()
+        if self._durable:
+            self._durable.create(job_id, owner, job.created_at)
         self._queue.put((job_id, work))
         return job_id
 
@@ -102,6 +115,12 @@ class JobManager:
             for k, v in fields.items():
                 setattr(job, k, v)
             job.updated_at = time.time()
+        if self._durable:
+            # mirror the durable columns (result serialised by the store)
+            cols = {k: v for k, v in fields.items()
+                    if k in ("status", "phase", "processed", "total", "result", "error")}
+            if cols:
+                self._durable.update(job_id, time.time(), **cols)
 
     def _loop(self) -> None:
         while True:

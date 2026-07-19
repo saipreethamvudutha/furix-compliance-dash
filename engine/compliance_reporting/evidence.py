@@ -80,12 +80,23 @@ class EvidenceObject:
 
 
 class EvidenceStore:
-    """Content-addressed, write-once store of EvidenceObjects for one tenant."""
+    """Content-addressed, write-once store of EvidenceObjects for one tenant.
 
-    def __init__(self, root: Path | str):
+    Encryption at rest (FUR-SEC-003) is transparent: when a master key is
+    configured (and a real cipher is available) object bytes are sealed with a
+    per-tenant key before writing and opened on read. The content address stays
+    the SHA-256 of the PLAINTEXT, so dedup and raw_uri pointers are unchanged.
+    Unconfigured → passthrough, and the envelope records `encrypted: false`.
+    """
+
+    def __init__(self, root: Path | str, sealer: "Any" = None):
         self.root = Path(root) / "evidence"
         self.objects_dir = self.root / "objects"
         self.objects_dir.mkdir(parents=True, exist_ok=True)
+        if sealer is None:
+            from .evidence_crypto import EvidenceSealer, KeyRing  # noqa: PLC0415
+            sealer = EvidenceSealer(KeyRing.from_env())
+        self.sealer = sealer
 
     # ── write ────────────────────────────────────────────────────────────────
     def put(
@@ -123,10 +134,13 @@ class EvidenceStore:
         )
         raw_path = self.objects_dir / f"{sha}.raw"
         env_path = self.objects_dir / f"{sha}.json"
+        # seal at rest (per-tenant key); address stays sha256 of PLAINTEXT
+        sealed, enc_meta = self.sealer.seal(data, tenant=tenant, sha256=sha)
         if not raw_path.exists():                    # write-once
-            self._atomic_write_bytes(raw_path, data)
+            self._atomic_write_bytes(raw_path, sealed)
         if not env_path.exists():
-            self._atomic_write_text(env_path, json.dumps(obj.to_dict(), sort_keys=True, indent=2))
+            envelope = {**obj.to_dict(), "encryption": enc_meta}
+            self._atomic_write_text(env_path, json.dumps(envelope, sort_keys=True, indent=2))
         return obj
 
     # ── read ─────────────────────────────────────────────────────────────────
@@ -134,13 +148,18 @@ class EvidenceStore:
         return (self.objects_dir / f"{sha256}.raw").exists()
 
     def get_raw(self, sha256: str) -> bytes:
-        return (self.objects_dir / f"{sha256}.raw").read_bytes()
+        """Return the PLAINTEXT bytes (transparently decrypting if sealed)."""
+        sealed = (self.objects_dir / f"{sha256}.raw").read_bytes()
+        env = self.get_envelope(sha256)
+        meta = env.get("encryption", {"encrypted": False})
+        return self.sealer.open(sealed, tenant=env.get("tenant", "default"),
+                                sha256=sha256, meta=meta)
 
     def get_envelope(self, sha256: str) -> dict[str, Any]:
         return json.loads((self.objects_dir / f"{sha256}.json").read_text(encoding="utf-8"))
 
     def verify_object(self, sha256: str) -> bool:
-        """Re-hash the stored bytes and confirm they match the address (tamper check)."""
+        """Re-hash the decrypted bytes and confirm they match the address (tamper check)."""
         if not self.exists(sha256):
             return False
         return sha256_bytes(self.get_raw(sha256)) == sha256

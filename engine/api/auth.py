@@ -94,10 +94,14 @@ class AuthRegistry:
     instance per process; constructed from env at import time in main.py.
     """
 
-    def __init__(self, keys: Iterable[dict], audit_path: Path | str | None = None):
+    def __init__(self, keys: Iterable[dict], audit_path: Path | str | None = None,
+                 oidc: "Any" = None):
         self._by_hash: dict[str, Principal] = {}
         self._lock = Lock()
         self.audit_path = Path(audit_path) if audit_path else None
+        # OIDC/JWT is additive: bearer JWTs from an IdP are accepted alongside
+        # API keys (FUR-CMP-004). None/unconfigured → JWTs are simply not tried.
+        self.oidc = oidc
         for k in keys:
             role = str(k.get("role", "readonly"))
             scopes = ROLE_SCOPES.get(role, ROLE_SCOPES["readonly"])
@@ -143,17 +147,37 @@ class AuthRegistry:
         audit = os.environ.get("FURIX_AUTH_AUDIT", "")
         store = os.environ.get("FURIX_REPORT_STORE", "_report_store")
         audit_path = Path(audit) if audit else Path(store) / "auth_audit.jsonl"
-        return cls(keys, audit_path=audit_path)
+        from .jwt_auth import OIDCConfig  # noqa: PLC0415
+        oidc = OIDCConfig.from_env()
+        return cls(keys, audit_path=audit_path, oidc=oidc if oidc.enabled else None)
 
     # ── authentication ───────────────────────────────────────────────────────
-    def authenticate(self, authorization: str | None) -> Principal:
-        """Resolve a bearer token to a Principal, or raise AuthError."""
+    def authenticate(self, authorization: str | None, *, now: int | None = None) -> Principal:
+        """Resolve a bearer token (API key OR OIDC JWT) to a Principal, or raise."""
         token = self._bearer(authorization)
+        if token and self.oidc is not None:
+            from .jwt_auth import JWTError, looks_like_jwt, verify_jwt  # noqa: PLC0415
+            if looks_like_jwt(token):
+                try:
+                    claims = verify_jwt(token, self.oidc, now=now)
+                    return self._principal_from_claims(claims)
+                except JWTError as e:
+                    self._audit(None, "authenticate", "-", "deny", f"jwt:{e}")
+                    raise AuthError(f"invalid JWT: {e}") from e
         principal = self._by_hash.get(_sha256(token)) if token else None
-        # constant-time-ish: always hash, and confirm membership via digest compare
         if principal is None:
             self._audit(None, "authenticate", "-", "deny", "invalid_or_missing_key")
-            raise AuthError("missing or invalid API key")
+            raise AuthError("missing or invalid credential")
+        return principal
+
+    def _principal_from_claims(self, claims: dict) -> Principal:
+        """Map verified JWT claims to a Principal (tenant + role → scopes)."""
+        tenant = str(claims.get(self.oidc.tenant_claim, "default"))
+        role = str(claims.get(self.oidc.role_claim, "readonly"))
+        scopes = ROLE_SCOPES.get(role, ROLE_SCOPES["readonly"])
+        key_id = str(claims.get("sub", "oidc-user"))
+        principal = Principal(key_id=key_id, tenant_id=tenant, role=role, scopes=scopes)
+        self._audit(principal, "authenticate", tenant, "allow", "jwt")
         return principal
 
     @staticmethod

@@ -214,6 +214,74 @@ def test_endpoints_require_auth_when_fastapi_present():
     assert r.headers.get("X-Frame-Options") == "DENY"
 
 
+# ── OIDC / JWT bearer auth (Wave 4) ───────────────────────────────────────────
+def _oidc_reg():
+    from .jwt_auth import OIDCConfig
+    cfg = OIDCConfig(hs256_secret="test-secret", issuer="https://idp.example",
+                     audience="furix", tenant_claim="tenant", role_claim="role")
+    return AuthRegistry(_KEYS, audit_path=tempfile.mktemp(prefix="furix_audit_"), oidc=cfg)
+
+
+def _token(claims, secret="test-secret", **over):
+    from .jwt_auth import make_hs256_token
+    base = {"iss": "https://idp.example", "aud": "furix", "sub": "alice",
+            "tenant": "acme", "role": "analyst", "exp": 9999999999}
+    base.update(claims)
+    base.update(over)
+    return make_hs256_token(base, secret)
+
+
+def test_valid_jwt_maps_to_principal():
+    reg = _oidc_reg()
+    p = reg.authenticate("Bearer " + _token({}), now=1_000_000)
+    assert p.tenant_id == "acme" and p.role == "analyst" and p.key_id == "alice"
+    assert "reports:ingest" in p.scopes
+
+
+def test_jwt_role_becomes_scopes():
+    reg = _oidc_reg()
+    admin = reg.authenticate("Bearer " + _token({"role": "admin"}), now=1_000_000)
+    assert admin.has("admin")
+    ro = reg.authenticate("Bearer " + _token({"role": "auditor"}), now=1_000_000)
+    assert ro.has("reports:export") and not ro.has("reports:ingest")
+
+
+def test_jwt_bad_signature_rejected():
+    reg = _oidc_reg()
+    forged = _token({}, secret="wrong-secret")
+    try:
+        reg.authenticate("Bearer " + forged, now=1_000_000)
+        raise AssertionError("accepted a forged JWT")
+    except AuthError:
+        pass
+
+
+def test_jwt_expired_rejected():
+    reg = _oidc_reg()
+    tok = _token({"exp": 1000})
+    try:
+        reg.authenticate("Bearer " + tok, now=1_000_000)
+        raise AssertionError("accepted an expired JWT")
+    except AuthError:
+        pass
+
+
+def test_jwt_issuer_and_audience_enforced():
+    reg = _oidc_reg()
+    for bad in ({"iss": "https://evil"}, {"aud": "someone-else"}):
+        try:
+            reg.authenticate("Bearer " + _token(bad), now=1_000_000)
+            raise AssertionError(f"accepted JWT with {bad}")
+        except AuthError:
+            pass
+
+
+def test_api_keys_still_work_alongside_oidc():
+    reg = _oidc_reg()
+    # a plain API key (not a JWT) is still accepted
+    assert reg.authenticate("admin-key").role == "admin"
+
+
 if __name__ == "__main__":
     import sys
     import traceback
