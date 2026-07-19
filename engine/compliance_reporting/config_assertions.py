@@ -25,13 +25,24 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Callable
 
 from .connectors import ConfigSnapshot, Resource
 from .versions import RULE_PACK_VERSION
 
 # result states (mirror the report test vocabulary)
-PASS, FAIL, UNKNOWN = "pass", "fail", "unknown"
+PASS, FAIL, UNKNOWN, STALE = "pass", "fail", "unknown", "stale"
+
+
+def _age_seconds(collected_at: str | None, as_of: str | None) -> int | None:
+    """Deterministic evidence age from two ISO timestamps (no wall-clock)."""
+    if not collected_at or not as_of:
+        return None
+    try:
+        return int((datetime.fromisoformat(as_of) - datetime.fromisoformat(collected_at)).total_seconds())
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -143,6 +154,184 @@ CONFIG_ASSERTION_CATALOG: dict[str, ConfigAssertionSpec] = {
             rationale="Repositories must have secret scanning enabled.",
             fail_attr="secret_scanning",
         ),
+        ConfigAssertionSpec(
+            "CFG-GH-DEPENDABOT", "Dependency scanning enabled",
+            "github_repo", ("Control 16",), "medium",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "dependabot_enabled"),
+            rationale="Repositories must have automated dependency scanning.",
+            fail_attr="dependabot_enabled",
+        ),
+        # ── CIS 3 — Data Protection ───────────────────────────────────────────
+        ConfigAssertionSpec(
+            "CFG-DATA-ENCRYPTION-REST", "Object storage encrypted at rest",
+            "aws_s3_bucket", ("Control 3",), "high",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "encrypted_at_rest"),
+            rationale="Data stores must be encrypted at rest (CIS 3.11).",
+            fail_attr="encrypted_at_rest",
+        ),
+        # ── CIS 1 — Inventory & Control of Enterprise Assets ─────────────────
+        ConfigAssertionSpec(
+            "CFG-ASSET-OWNER", "Every asset has an accountable owner",
+            "asset", ("Control 1",), "medium",
+            applies=lambda r: True,
+            predicate=lambda r: bool(r.attr("owner")),
+            rationale="Every enterprise asset must have a documented owner (CIS 1.1).",
+            fail_attr="owner",
+        ),
+        ConfigAssertionSpec(
+            "CFG-ASSET-AUTHORIZED", "No unauthorized assets",
+            "asset", ("Control 1",), "high",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "authorized"),
+            rationale="Unauthorized assets must be removed or authorized (CIS 1.2).",
+            fail_attr="authorized",
+        ),
+        # ── CIS 2 — Inventory & Control of Software Assets ───────────────────
+        ConfigAssertionSpec(
+            "CFG-SW-SUPPORTED", "No unsupported/end-of-life software",
+            "software", ("Control 2",), "high",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "supported"),
+            rationale="Unsupported software must be removed (CIS 2.2).",
+            fail_attr="supported",
+        ),
+        ConfigAssertionSpec(
+            "CFG-SW-INVENTORIED", "Software is inventoried",
+            "software", ("Control 2",), "medium",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "inventoried"),
+            rationale="All software must be tracked in inventory (CIS 2.1).",
+            fail_attr="inventoried",
+        ),
+        # ── CIS 4 — Secure Configuration ─────────────────────────────────────
+        ConfigAssertionSpec(
+            "CFG-CONFIG-BENCHMARK", "Passes secure-configuration benchmark",
+            "config_item", ("Control 4",), "high",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "benchmark_pass"),
+            rationale="Systems must pass the secure-config baseline (CIS 4.1).",
+            fail_attr="benchmark_pass",
+        ),
+        ConfigAssertionSpec(
+            "CFG-CONFIG-NO-DEFAULT-CREDS", "No default credentials",
+            "config_item", ("Control 4",), "critical",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "no_default_creds"),
+            rationale="Default accounts/passwords must be changed (CIS 4.7).",
+            fail_attr="no_default_creds",
+        ),
+        # ── CIS 7 — Continuous Vulnerability Management ──────────────────────
+        ConfigAssertionSpec(
+            "CFG-VULN-SLA", "No vulnerability past remediation SLA",
+            "vuln_scan", ("Control 7",), "high",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "within_sla"),
+            rationale="Vulnerabilities must be remediated within SLA (CIS 7.7).",
+            fail_attr="within_sla",
+        ),
+        ConfigAssertionSpec(
+            "CFG-VULN-AUTH-SCAN", "Authenticated vulnerability scanning",
+            "vuln_scan", ("Control 7",), "medium",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "authenticated"),
+            rationale="Scans must be authenticated for full coverage (CIS 7.5).",
+            fail_attr="authenticated",
+        ),
+        # ── CIS 8 — Audit Log Management ─────────────────────────────────────
+        ConfigAssertionSpec(
+            "CFG-LOG-ENABLED", "Audit logging enabled on all sources",
+            "log_source", ("Control 8",), "high",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "logging_enabled"),
+            rationale="Audit logging must be enabled on all systems (CIS 8.2).",
+            fail_attr="logging_enabled",
+        ),
+        ConfigAssertionSpec(
+            "CFG-LOG-RETENTION", "Log retention ≥ 90 days",
+            "log_source", ("Control 8",), "medium",
+            applies=lambda r: True,
+            predicate=lambda r: int(r.attr("retention_days", 0)) >= 90,
+            rationale="Audit logs must be retained ≥90 days (CIS 8.3).",
+            fail_attr="retention_days",
+        ),
+        ConfigAssertionSpec(
+            "CFG-LOG-CENTRAL", "Centralized log collection",
+            "log_source", ("Control 8",), "medium",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "centralized"),
+            rationale="Logs must be centrally collected (CIS 8.9).",
+            fail_attr="centralized",
+        ),
+        # ── CIS 10 — Malware Defenses ────────────────────────────────────────
+        ConfigAssertionSpec(
+            "CFG-EDR-DEPLOYED", "EDR deployed on all endpoints",
+            "endpoint", ("Control 10",), "high",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "edr_deployed"),
+            rationale="Anti-malware/EDR must be deployed on endpoints (CIS 10.1).",
+            fail_attr="edr_deployed",
+        ),
+        ConfigAssertionSpec(
+            "CFG-EDR-CURRENT", "Malware signatures current",
+            "endpoint", ("Control 10",), "medium",
+            applies=lambda r: _truthy(r, "edr_deployed"),
+            predicate=lambda r: _truthy(r, "signatures_current"),
+            rationale="Anti-malware signatures must be kept current (CIS 10.2).",
+            fail_attr="signatures_current",
+        ),
+        # ── CIS 11 — Data Recovery ───────────────────────────────────────────
+        ConfigAssertionSpec(
+            "CFG-BACKUP-ENABLED", "Backups configured",
+            "backup_job", ("Control 11",), "high",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "enabled"),
+            rationale="Automated backups must be configured (CIS 11.1).",
+            fail_attr="enabled",
+        ),
+        ConfigAssertionSpec(
+            "CFG-BACKUP-TESTED", "Backup restore tested",
+            "backup_job", ("Control 11",), "medium",
+            applies=lambda r: _truthy(r, "enabled"),
+            predicate=lambda r: _truthy(r, "restore_tested"),
+            rationale="Recovery must be tested periodically (CIS 11.5).",
+            fail_attr="restore_tested",
+        ),
+        ConfigAssertionSpec(
+            "CFG-BACKUP-ENCRYPTED", "Backups encrypted",
+            "backup_job", ("Control 11",), "high",
+            applies=lambda r: _truthy(r, "enabled"),
+            predicate=lambda r: _truthy(r, "encrypted"),
+            rationale="Backup data must be encrypted (CIS 11.3).",
+            fail_attr="encrypted",
+        ),
+        # ── CIS 12 — Network Infrastructure Management ───────────────────────
+        ConfigAssertionSpec(
+            "CFG-NET-FIREWALL-REVIEWED", "Firewall rules reviewed",
+            "firewall_rule", ("Control 12",), "medium",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "recently_reviewed"),
+            rationale="Firewall rulesets must be reviewed periodically (CIS 12.x).",
+            fail_attr="recently_reviewed",
+        ),
+        ConfigAssertionSpec(
+            "CFG-NET-SEGMENTATION", "Network segmentation in place",
+            "network_zone", ("Control 12",), "medium",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "segmented"),
+            rationale="Sensitive assets must be network-segmented (CIS 12.2).",
+            fail_attr="segmented",
+        ),
+        # ── CIS 13 — Network Monitoring & Defense ────────────────────────────
+        ConfigAssertionSpec(
+            "CFG-NET-IDS", "Network intrusion detection deployed",
+            "network_monitor", ("Control 13",), "high",
+            applies=lambda r: True,
+            predicate=lambda r: _truthy(r, "ids_deployed"),
+            rationale="Network IDS/IPS must be deployed (CIS 13.3).",
+            fail_attr="ids_deployed",
+        ),
     )
 }
 
@@ -152,8 +341,22 @@ CONFIG_CONTROLS: frozenset[str] = frozenset(
 )
 
 
+def canonical_resource(r: Resource) -> str:
+    """Stable serialisation of a resource — the basis for its evidence hash."""
+    return json.dumps(
+        {"resource_id": r.resource_id, "resource_type": r.resource_type,
+         "source": r.source, "boundary": r.boundary, "attributes": dict(r.attributes)},
+        sort_keys=True, separators=(",", ":"),
+    )
+
+
+def resource_sha256(r: Resource) -> str:
+    return hashlib.sha256(canonical_resource(r).encode("utf-8")).hexdigest()
+
+
 def _evidence_row(r: Resource, spec: ConfigAssertionSpec, passed: bool) -> dict[str, Any]:
     detail = f"{spec.fail_attr}={r.attr(spec.fail_attr)!r}" if spec.fail_attr else ""
+    sha = resource_sha256(r)
     return {
         "resource_id": r.resource_id,
         "resource_type": r.resource_type,
@@ -161,15 +364,28 @@ def _evidence_row(r: Resource, spec: ConfigAssertionSpec, passed: bool) -> dict[
         "observed_at": r.observed_at,
         "result": "pass" if passed else "fail",
         "detail": detail,
+        # lineage parity with log evidence (FUR-CMP-007): a resolvable pointer
+        # into the immutable evidence store, written at config-ingest time.
+        "resource_sha256": sha,
+        "raw_uri": f"furix-evidence://{sha}",
     }
 
 
-def evaluate(snapshot: ConfigSnapshot) -> list[dict[str, Any]]:
+def evaluate(snapshot: ConfigSnapshot, as_of: str | None = None) -> list[dict[str, Any]]:
     """
     Evaluate every applicable config assertion over a snapshot. Returns one
     result dict per assertion whose resource_type appears (observed or
-    expected), each with a reconciled population and resource-level evidence.
+    expected), each with a reconciled population, freshness, and resource-level
+    evidence.
+
+    Freshness (FUR-CMP-010): `as_of` is an explicit evaluation time (never
+    wall-clock, for determinism). If the snapshot's evidence is older than an
+    assertion's freshness SLO, a would-be PASS becomes STALE — stale evidence
+    can never make a control compliant. `as_of` defaults to the snapshot's own
+    collected_at (age 0 = fresh).
     """
+    as_of = as_of or snapshot.collected_at
+    age = _age_seconds(snapshot.collected_at, as_of)
     results: list[dict[str, Any]] = []
     for spec in CONFIG_ASSERTION_CATALOG.values():
         expected = snapshot.expected_count(spec.resource_type)
@@ -191,6 +407,11 @@ def evaluate(snapshot: ConfigSnapshot) -> list[dict[str, Any]]:
             status, reason = PASS, "all_in_scope_satisfied"
         else:
             status, reason = UNKNOWN, "no_subjects_in_scope"
+
+        stale = age is not None and age > spec.freshness_slo_seconds
+        if stale and status == PASS:
+            # cannot claim a control is in place on stale evidence
+            status, reason = STALE, "evidence_stale"
 
         reconciled = observed >= expected
         coverage = round(100.0 * observed / expected, 1) if expected else 100.0
@@ -217,6 +438,13 @@ def evaluate(snapshot: ConfigSnapshot) -> list[dict[str, Any]]:
                 "failing": len(failing),
                 "coverage_pct": coverage,
                 "reconciled": reconciled,
+            },
+            "freshness": {
+                "as_of": as_of,
+                "collected_at": snapshot.collected_at,
+                "age_seconds": age,
+                "slo_seconds": spec.freshness_slo_seconds,
+                "stale": bool(stale),
             },
             "evidence": evidence,
         })

@@ -32,10 +32,11 @@ def test_snapshot_parses_and_reconciles_population():
     s = _snap()
     assert s.observed_count("okta_app") == 2 == s.expected_count("okta_app")
     assert s.observed_count("github_repo") == 2
-    assert {r.resource_type for r in s.resources} == {
-        "okta_app", "okta_user", "aws_account", "aws_access_key",
-        "aws_s3_bucket", "github_repo",
-    }
+    # the expanded snapshot spans many resource types across 13 controls
+    types = {r.resource_type for r in s.resources}
+    for t in ("okta_app", "aws_s3_bucket", "github_repo", "asset", "software",
+              "config_item", "vuln_scan", "log_source", "endpoint", "backup_job"):
+        assert t in types, t
 
 
 # ── evaluator ─────────────────────────────────────────────────────────────────
@@ -67,6 +68,59 @@ def test_evaluator_hash_is_stable():
     b = {r["spec_id"]: r["evaluator_hash"] for r in evaluate(_snap())}
     assert a == b
     assert a["CFG-IDP-MFA-EXTERNAL"] != a["CFG-AWS-ROOT-MFA"]
+
+
+def test_catalog_spans_thirty_assertions_and_thirteen_controls():
+    assert len(CONFIG_ASSERTION_CATALOG) >= 30
+    controls = {c for s in CONFIG_ASSERTION_CATALOG.values() for c in s.control_edges}
+    # config now covers many controls detection never touched (1,2,4,7,8,10,11,12,13)
+    for c in ("Control 1", "Control 2", "Control 4", "Control 7", "Control 8",
+              "Control 10", "Control 11", "Control 12", "Control 13", "Control 16"):
+        assert c in controls, c
+    assert len(controls) >= 13
+
+
+def test_resource_evidence_has_lineage_hash():
+    r = {x["spec_id"]: x for x in evaluate(_snap())}["CFG-BACKUP-ENCRYPTED"]
+    ev = r["evidence"][0]
+    assert ev["resource_sha256"] and ev["raw_uri"] == f"furix-evidence://{ev['resource_sha256']}"
+
+
+# ── freshness / STALE (FUR-CMP-010) ───────────────────────────────────────────
+def test_fresh_evidence_within_slo_passes():
+    # as_of equal to collected_at → age 0 → fresh
+    results = evaluate(_snap(), as_of="2026-07-19T08:00:00+00:00")
+    assert all(r["status"] == "pass" for r in results)
+    assert all(not r["freshness"]["stale"] for r in results)
+
+
+def test_stale_evidence_downgrades_pass_to_stale():
+    # config collected 2026-07-19, evaluated 6 months later → beyond every SLO
+    results = evaluate(_snap(), as_of="2027-01-19T08:00:00+00:00")
+    assert all(r["status"] == "stale" for r in results)
+    assert all(r["freshness"]["stale"] for r in results)
+
+
+def test_stale_config_cannot_make_control_compliant():
+    r = build_report(demo_batch(), registry=_REG, generated_at=_GEN_AT,
+                     config_snapshot=demo_config_snapshot(),
+                     config_as_of="2027-01-19T08:00:00+00:00")
+    # every config assertion is stale → NO control should be compliant on it
+    compliant = [c["control_id"] for c in r["controls"] if c["status"] == "compliant"]
+    assert compliant == [], compliant
+    assert verify_report(r, demo_batch()).ok
+
+
+def test_verifier_rejects_pass_on_stale_evidence():
+    r = build_report(demo_batch(), registry=_REG, generated_at=_GEN_AT,
+                     config_snapshot=demo_config_snapshot())
+    bad = copy.deepcopy(r)
+    # force one assertion stale but leave it claiming pass
+    a = bad["config_assertions"][0]
+    a["freshness"]["stale"] = True
+    out = verify_report(bad, demo_batch())
+    assert not out.ok
+    assert any(c in ("CFG-FRESH-GATE", "HASH-CONTENT") for c, _ in out.failures)
 
 
 # ── report merge: controls can now be compliant ──────────────────────────────

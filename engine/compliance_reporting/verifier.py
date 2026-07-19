@@ -389,11 +389,20 @@ def _verify_rollup(
         v.check("CFG-POP",
                 pop.get("passing", 0) + pop.get("failing", 0) == pop.get("in_scope", 0),
                 f"{res.get('spec_id')} population passing+failing != in_scope")
+        # config evidence points at the immutable store by content hash
+        for ev in res.get("evidence", []):
+            sha = ev.get("resource_sha256", "")
+            if sha:
+                v.check("CFG-EVID", ev.get("raw_uri") == f"furix-evidence://{sha}",
+                        f"{res.get('spec_id')} resource raw_uri != uri for its sha256")
         # a PASS is only legal on a complete population with no failures
         if res.get("status") == "pass":
             v.check("CFG-PASS-GATE",
                     pop.get("reconciled") and pop.get("failing", 0) == 0 and pop.get("in_scope", 0) > 0,
                     f"{res['spec_id']} claims pass without a clean, complete population")
+            # stale evidence may never back a pass (FUR-CMP-010)
+            v.check("CFG-FRESH-GATE", not res.get("freshness", {}).get("stale"),
+                    f"{res['spec_id']} claims pass on stale evidence")
 
 
 # ── public API ────────────────────────────────────────────────────────────────

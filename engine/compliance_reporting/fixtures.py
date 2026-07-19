@@ -233,11 +233,14 @@ def demo_config_snapshot() -> dict[str, Any]:
 
     return {
         "source": "furix-demo",
-        "collected_at": "2026-07-14T08:00:00+00:00",
+        "collected_at": "2026-07-19T08:00:00+00:00",
         "boundary": "prod",
         "expected_counts": {
             "okta_app": 2, "okta_user": 3, "aws_account": 1,
             "aws_access_key": 2, "aws_s3_bucket": 2, "github_repo": 2,
+            "asset": 3, "software": 2, "config_item": 2, "vuln_scan": 2,
+            "log_source": 3, "endpoint": 3, "backup_job": 2,
+            "firewall_rule": 2, "network_zone": 2, "network_monitor": 1,
         },
         "resources": [
             _r("app-portal", "okta_app", internet_facing=True, mfa_enforced=True),
@@ -248,12 +251,43 @@ def demo_config_snapshot() -> dict[str, Any]:
             _r("aws-root", "aws_account", root_mfa_enabled=True),
             _r("key-ci", "aws_access_key", status="active", age_days=30),
             _r("key-deploy", "aws_access_key", status="active", age_days=44),
-            _r("bucket-app", "aws_s3_bucket", public_access_blocked=True),
-            _r("bucket-logs", "aws_s3_bucket", public_access_blocked=True),
+            _r("bucket-app", "aws_s3_bucket", public_access_blocked=True, encrypted_at_rest=True),
+            _r("bucket-logs", "aws_s3_bucket", public_access_blocked=True, encrypted_at_rest=True),
             _r("repo-api", "github_repo", default_branch="main", branch_protected=True,
-               required_reviews=2, secret_scanning=True),
+               required_reviews=2, secret_scanning=True, dependabot_enabled=True),
             _r("repo-web", "github_repo", default_branch="main", branch_protected=True,
-               required_reviews=1, secret_scanning=True),
+               required_reviews=1, secret_scanning=True, dependabot_enabled=True),
+            # CIS 1 — assets
+            _r("asset-web01", "asset", owner="platform", authorized=True),
+            _r("asset-db01", "asset", owner="data", authorized=True),
+            _r("asset-lb01", "asset", owner="platform", authorized=True),
+            # CIS 2 — software
+            _r("sw-nginx", "software", supported=True, inventoried=True),
+            _r("sw-postgres16", "software", supported=True, inventoried=True),
+            # CIS 4 — secure configuration
+            _r("cfg-web-baseline", "config_item", benchmark_pass=True, no_default_creds=True),
+            _r("cfg-db-baseline", "config_item", benchmark_pass=True, no_default_creds=True),
+            # CIS 7 — vulnerability management
+            _r("scan-external", "vuln_scan", within_sla=True, authenticated=True),
+            _r("scan-internal", "vuln_scan", within_sla=True, authenticated=True),
+            # CIS 8 — audit log management
+            _r("log-cloudtrail", "log_source", logging_enabled=True, retention_days=365, centralized=True),
+            _r("log-vpc", "log_source", logging_enabled=True, retention_days=180, centralized=True),
+            _r("log-app", "log_source", logging_enabled=True, retention_days=90, centralized=True),
+            # CIS 10 — malware defenses
+            _r("ep-laptop01", "endpoint", edr_deployed=True, signatures_current=True),
+            _r("ep-laptop02", "endpoint", edr_deployed=True, signatures_current=True),
+            _r("ep-server01", "endpoint", edr_deployed=True, signatures_current=True),
+            # CIS 11 — data recovery
+            _r("backup-db", "backup_job", enabled=True, restore_tested=True, encrypted=True),
+            _r("backup-files", "backup_job", enabled=True, restore_tested=True, encrypted=True),
+            # CIS 12 — network infrastructure
+            _r("fw-perimeter", "firewall_rule", recently_reviewed=True),
+            _r("fw-internal", "firewall_rule", recently_reviewed=True),
+            _r("zone-dmz", "network_zone", segmented=True),
+            _r("zone-data", "network_zone", segmented=True),
+            # CIS 13 — network monitoring
+            _r("ids-core", "network_monitor", ids_deployed=True),
         ],
     }
 

@@ -420,6 +420,7 @@ def build_report(
     generated_at: str | None = None,
     engine_version: str = ENGINE_VERSION,
     config_snapshot: Any = None,
+    config_as_of: str | None = None,
 ) -> dict[str, Any]:
     """
     Build the canonical compliance report for one batch of pipeline results.
@@ -457,7 +458,7 @@ def build_report(
         from .config_assertions import evaluate as _eval_config  # local import
         from .connectors import ConfigSnapshot, parse_snapshot
         snap = config_snapshot if isinstance(config_snapshot, ConfigSnapshot) else parse_snapshot(config_snapshot)
-        config_results = _eval_config(snap)
+        config_results = _eval_config(snap, as_of=config_as_of)
 
     evidence = _evidence_items(entries)
     tests = _build_tests(evidence, logs_evaluated=len(successes))

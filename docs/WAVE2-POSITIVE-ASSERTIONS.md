@@ -77,9 +77,32 @@ with the population (`2/2 resources`).
 
 133 checks green across 12 suites (config **12**, adapter 14, plus all prior).
 
-## What's next in Wave 2
+## Increment 2 (W2b) — breadth, freshness, lineage
 
-More assertions toward the audit's 30-assertion gate; live API connectors
-(AWS/Okta/GitHub) behind the same snapshot shape; retaining raw config
-resources in the immutable evidence store for full lineage; freshness-SLO
-enforcement (STALE when config is older than its cadence).
+**30 assertions across 13 CIS controls** (was 9 across 4). Added CIS 1 (asset
+inventory + ownership), 2 (software support/inventory), 4 (secure-config
+benchmark + no default creds), 7 (vuln SLA + authenticated scan), 8 (log
+enablement/retention/central), 10 (EDR coverage + current), 11 (backup
+enabled/tested/encrypted), 12 (firewall review + segmentation), 13 (IDS), plus
+more 3/16 (encryption-at-rest, dependabot). On the demo this takes CIS from 2 →
+**8 compliant controls, 53% earned compliance, 83% coverage** (NIST 90%).
+
+**Freshness / STALE (FUR-CMP-010).** `evaluate(snapshot, as_of=)` — an explicit
+evaluation time (never wall-clock, so determinism holds). If evidence is older
+than an assertion's freshness SLO, a would-be PASS becomes **STALE**: stale
+evidence can never make a control compliant, and the verifier rejects a PASS on
+stale evidence (`CFG-FRESH-GATE`). `config_as_of` threads through `build_report`.
+
+**Config evidence lineage (FUR-CMP-007 parity).** Every config resource now has
+a deterministic `resource_sha256` and a `furix-evidence://` URI; `ingest_config`
+writes each raw resource to the tenant's immutable evidence store, so config
+evidence is as reproducible as log evidence. Verifier checks the URI matches the
+hash (`CFG-EVID`).
+
+139 checks green across 12 suites (config **18**).
+
+## Still ahead in Wave 2
+
+Live API connectors (AWS/Okta/GitHub) behind the same snapshot shape;
+per-resource freshness (vs snapshot-level); the remaining CIS 9/14/18 controls
+that need people/process evidence, not config (Wave 5 territory).

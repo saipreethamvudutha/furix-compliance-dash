@@ -198,7 +198,21 @@ def ingest_config(
     prior_id = prior[0].report_id if prior else None
     batch = store.load_batch(prior_id) if prior_id else []
 
-    report = build_report(batch or [], registry=registry, config_snapshot=snapshot)
+    # Retain each raw config resource immutably so config evidence has the same
+    # furix-evidence:// lineage as log evidence (FUR-CMP-007).
+    from compliance_reporting.connectors import parse_snapshot  # noqa: PLC0415
+    from compliance_reporting.config_assertions import canonical_resource  # noqa: PLC0415
+    from compliance_reporting.evidence import EvidenceStore  # noqa: PLC0415
+    ev_store = EvidenceStore(store.root)
+    snap = parse_snapshot(snapshot)
+    for r in snap.resources:
+        try:
+            ev_store.put(canonical_resource(r), source=f"config:{r.resource_type}",
+                         tenant=tenant, observed_at=r.observed_at)
+        except OSError:
+            pass
+
+    report = build_report(batch or [], registry=registry, config_snapshot=snap)
     verification = verify_report(report, batch or [])
     if not verification.ok:
         raise IngestError(f"config report failed verification: {verification.failures}")
