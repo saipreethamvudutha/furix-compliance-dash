@@ -30,6 +30,7 @@ from compliance_reporting.render_html import render_html_report
 from compliance_reporting.settings import Settings
 
 from compliance_reporting.attestation_store import AttestationError, AttestationStore
+from compliance_reporting.connector_registry import ConnectorRegistry, ConnectorScheduler
 
 from . import service
 from .attest_keys import attestation_keyring_for
@@ -70,6 +71,24 @@ def _approved_attestations(tenant: str):
     people/process controls from human evidence."""
     ring = attestation_keyring_for(tenant)
     return _attest_store_for(tenant).approved_attestations(tenant), ring
+
+
+# per-tenant connector registries (Wave-G), cached
+_connector_regs: dict[str, ConnectorRegistry] = {}
+_connector_lock = Lock()
+
+
+def _connector_registry_for(tenant: str) -> ConnectorRegistry:
+    with _connector_lock:
+        r = _connector_regs.get(tenant)
+        if r is None:
+            r = ConnectorRegistry(_stores.for_tenant(tenant).root)
+            _connector_regs[tenant] = r
+        return r
+
+
+# Connector manifests are mandatory-signed; the secret is server-only config.
+_CONNECTOR_SIGNING_SECRET = os.environ.get("FURIX_CONNECTOR_SIGNING_SECRET", "")
 
 # Hardening knobs (env-overridable)
 _MAX_BODY_BYTES = int(os.environ.get("FURIX_MAX_BODY_BYTES", str(50 * 1024 * 1024)))  # 50 MB
@@ -399,6 +418,65 @@ def reject_attestation(att_id: str, body: AttestationDecisionBody,
             reason=body.reason)
     except AttestationError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# ── connectors: scheduled collection + health (Wave-G) ────────────────────────
+class ConnectorBody(BaseModel):
+    connector_id: str
+    kind: str = "demo-aws"
+    schedule_seconds: int = 86400
+    config: dict = {}
+
+
+def _connector_signing_secret() -> str | None:
+    if _CONNECTOR_SIGNING_SECRET:
+        return _CONNECTOR_SIGNING_SECRET
+    # dev convenience only — never a silent secret in production
+    if os.environ.get("FURIX_ENV", "development").lower() != "production":
+        return "furix-dev-connector-secret"
+    return None
+
+
+@app.get("/api/connectors")
+def list_connectors(principal: Principal = Depends(require(SCOPE_READ, "list_connectors")),
+                    tenant: str | None = None):
+    tn = (tenant or principal.tenant_id)
+    _store_for(principal, tenant)  # enforce cross-tenant rules
+    return _connector_registry_for(tn).list(tn, now=int(time.time()))
+
+
+@app.post("/api/connectors", status_code=201)
+def register_connector(body: ConnectorBody,
+                       principal: Principal = Depends(require(SCOPE_INGEST, "register_connector"))):
+    if not principal.has(SCOPE_ADMIN):
+        raise HTTPException(status_code=403, detail="registering a connector requires admin authority")
+    if body.schedule_seconds < 60:
+        raise HTTPException(status_code=400, detail="schedule_seconds must be >= 60")
+    tn = principal.tenant_id
+    now = int(time.time())
+    reg = _connector_registry_for(tn)
+    reg.register(tenant=tn, connector_id=body.connector_id, kind=body.kind,
+                 schedule_seconds=body.schedule_seconds, now=now, config=body.config)
+    # return the health-enriched record
+    return next(c for c in reg.list(tn, now=now) if c["connector_id"] == body.connector_id)
+
+
+@app.post("/api/connectors/{connector_id}/run")
+def run_connector(connector_id: str,
+                  principal: Principal = Depends(require(SCOPE_INGEST, "run_connector"))):
+    if not principal.has(SCOPE_ADMIN):
+        raise HTTPException(status_code=403, detail="running a connector requires admin authority")
+    secret = _connector_signing_secret()
+    if not secret:
+        raise HTTPException(status_code=400,
+                            detail="connector manifest signing secret not configured "
+                                   "(set FURIX_CONNECTOR_SIGNING_SECRET); manifests are mandatory-signed")
+    tn = principal.tenant_id
+    reg = _connector_registry_for(tn)
+    if reg.get(tn, connector_id) is None:
+        raise HTTPException(status_code=404, detail=f"unknown connector {connector_id}")
+    runner = service.make_connector_runner(tn, secret)
+    return ConnectorScheduler(reg).run_one(tn, connector_id, runner, now=int(time.time()))
 
 
 # ── OSCAL + auditor workspace (Wave 5) ────────────────────────────────────────

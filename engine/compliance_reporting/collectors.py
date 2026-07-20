@@ -28,7 +28,8 @@ import hashlib
 import hmac
 import json
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, Protocol
+from pathlib import Path
+from typing import Any, Callable, Protocol
 
 
 class CollectionError(Exception):
@@ -70,12 +71,46 @@ class Checkpoint:
     """A resumable cursor per collection stage (persist between runs)."""
 
     cursors: dict[str, str | None] = field(default_factory=dict)
+    # optional durable backing store; when set, every mutation is flushed to disk
+    store: "CheckpointStore | None" = None
 
     def get(self, stage: str) -> str | None:
         return self.cursors.get(stage)
 
     def set(self, stage: str, cursor: str | None) -> None:
         self.cursors[stage] = cursor
+        if self.store is not None:
+            self.store.save(self)
+
+
+class CheckpointStore:
+    """
+    Durable, JSON-file-backed checkpoint persistence so a collection can resume
+    across process restarts (crash-safe: written atomically via a temp file +
+    rename). Keyed per (tenant, connector) file.
+    """
+
+    def __init__(self, root: Path | str, tenant: str, connector: str):
+        self.dir = Path(root) / tenant
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.path = self.dir / f"checkpoint-{connector}.json"
+
+    def load(self) -> Checkpoint:
+        cursors: dict[str, str | None] = {}
+        if self.path.exists():
+            try:
+                cursors = json.loads(self.path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                cursors = {}
+        return Checkpoint(cursors=cursors, store=self)
+
+    def save(self, checkpoint: Checkpoint) -> None:
+        tmp = self.path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(checkpoint.cursors, sort_keys=True), encoding="utf-8")
+        tmp.replace(self.path)
+
+    def clear(self) -> None:
+        self.path.unlink(missing_ok=True)
 
 
 class TransientError(Exception):
@@ -88,6 +123,11 @@ class AwsClient(Protocol):
     def list_access_keys(self, account_id: str, cursor: str | None) -> Page: ...
     def get_account_summary(self, account_id: str) -> dict[str, Any]: ...
     def check_permissions(self) -> list[str]: ...  # returns MISSING permissions
+    # OPTIONAL: an INDEPENDENTLY-derived expected account count (e.g. counted by
+    # traversing the Organizations OU tree rather than the flat list_accounts).
+    # When present the collector reconciles the observed population against THIS,
+    # so a mismatch is meaningful rather than self-referential.
+    # def independent_account_count(self) -> int: ...
 
 
 def paginate(fetch: Callable[[str | None], Page], retry: RetryPolicy,
@@ -130,20 +170,38 @@ class AwsOrgIamCollector:
     boundary: str = "aws"
     retry: RetryPolicy = field(default_factory=RetryPolicy)
     signing_secret: str = ""
+    require_signed: bool = True   # fail-closed: a manifest MUST be signed
 
     def collect(self, *, collected_at: str, checkpoint: Checkpoint | None = None) -> dict[str, Any]:
         """
         Collect AWS org accounts + IAM posture into a snapshot, reconcile the
-        population, and attach a signed manifest. Returns {"snapshot":..., "manifest":...}.
+        population against an INDEPENDENT expected count, and attach a MANDATORY
+        signed manifest. Returns {"snapshot":..., "manifest":...}.
         """
+        # 0. a manifest must be signed (tamper-evident provenance) — refuse to
+        #    run without a signing secret rather than emit an unsigned manifest.
+        if self.require_signed and not self.signing_secret:
+            raise CollectionError("refusing to collect without a manifest signing secret "
+                                  "(set a signing_secret; manifests are mandatory-signed)")
+
         # 1. permission preflight — abort on any missing read permission
         missing = self.retry.run(self.client.check_permissions, on_transient=TransientError)
         if missing:
             raise PermissionError_(f"missing required read permissions: {', '.join(missing)}")
 
-        # 2. discover accounts (INDEPENDENT expected population)
+        # 2. discover accounts
         accounts = paginate(lambda c: self.client.list_accounts(c), self.retry, checkpoint, "accounts")
-        expected_accounts = len(accounts)
+
+        # 2b. INDEPENDENT expected population: prefer a count derived by a DIFFERENT
+        #     path (OU-tree traversal) so reconciliation is not self-referential.
+        indep = getattr(self.client, "independent_account_count", None)
+        indep_val = self.retry.run(indep, on_transient=TransientError) if callable(indep) else None
+        if indep_val is not None:
+            expected_accounts = indep_val
+            reconciliation_basis = "independent-ou-tree"
+        else:
+            expected_accounts = len(accounts)
+            reconciliation_basis = "self-referential"
 
         resources: list[dict[str, Any]] = []
         observed_keys = 0
@@ -177,10 +235,11 @@ class AwsOrgIamCollector:
             "expected_counts": expected_counts, "resources": resources,
         }
 
-        # 4. signed manifest
+        # 4. mandatory signed manifest
         manifest = {
             "source": "aws-org-iam", "tenant": self.tenant, "boundary": self.boundary,
             "collected_at": collected_at,
+            "reconciliation_basis": reconciliation_basis,
             "expected_accounts": expected_accounts, "observed_accounts": observed_accounts,
             "observed_access_keys": observed_keys, "reconciled": reconciled,
             "resource_sha256": hashlib.sha256(
@@ -188,11 +247,13 @@ class AwsOrgIamCollector:
         }
         if self.signing_secret:
             manifest["signature"] = sign_manifest(manifest, self.signing_secret)
+        elif self.require_signed:  # pragma: no cover - guarded at entry
+            raise CollectionError("manifest signing secret disappeared mid-collection")
 
         if not reconciled:
             raise CollectionError(
-                f"population reconciliation failed: expected {expected_accounts} accounts, "
-                f"observed {observed_accounts}")
+                f"population reconciliation failed ({reconciliation_basis}): expected "
+                f"{expected_accounts} accounts, observed {observed_accounts}")
         return {"snapshot": snapshot, "manifest": manifest}
 
 
@@ -207,16 +268,24 @@ class FakeAwsClient:
                  keys_by_account: dict[str, list[dict[str, Any]]] | None = None,
                  summaries: dict[str, dict[str, Any]] | None = None,
                  missing_permissions: list[str] | None = None,
-                 fail_times: int = 0, page_size: int = 2):
+                 fail_times: int = 0, page_size: int = 2,
+                 independent_count: int | None = None):
         self._accounts = accounts or []
         self._keys = keys_by_account or {}
         self._summaries = summaries or {}
         self._missing = missing_permissions or []
         self._fail_remaining = fail_times
         self._page_size = page_size
+        # when set, exposes an INDEPENDENT expected account count (set it to a
+        # value different from len(accounts) to exercise reconciliation failure)
+        self._independent_count = independent_count
 
     def check_permissions(self) -> list[str]:
         return list(self._missing)
+
+    def independent_account_count(self) -> int | None:
+        # None → not available (collector falls back to self-referential reconc.)
+        return self._independent_count
 
     def _maybe_fail(self) -> None:
         if self._fail_remaining > 0:

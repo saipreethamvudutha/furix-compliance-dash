@@ -128,8 +128,11 @@ def test_oscal_export_is_schema_validated():
     r = c.get("/api/oscal?kind=poam", headers=_H["admin"])
     assert r.status_code == 200
     body = r.json()
-    # jsonschema present in this env → validation actually ran and passed
+    # jsonschema present in this env → validation actually ran and passed against
+    # the OFFICIAL NIST OSCAL 1.2.1 schema
     assert body["validation"]["ran"] is True and body["validation"]["ok"] is True
+    assert "official" in body["validation"]["note"], body["validation"]["note"]
+    assert "nist/" in body["validation"]["schema"], body["validation"]["schema"]
     pkg = c.get("/api/audit/export", headers=_H["admin"]).json()
     assert pkg["oscal"]["validation_ok"] is True
 
@@ -192,6 +195,44 @@ def test_attestation_tenant_isolation():
            json={"decided_at": "2026-07-19T13:00:00+00:00"}, headers=_H["admin"])
     # globex admin sees NONE of acme's attestations
     assert c.get("/api/attestations", headers=_H["globex"]).json() == []
+
+
+# ── connectors: scheduled collection + health (Wave-G) ────────────────────────
+def test_connector_register_run_and_health():
+    c, _ = _make_client()
+    reg = {"connector_id": "demo1", "kind": "demo-aws", "schedule_seconds": 3600}
+    # analyst may not register (admin authority)
+    assert c.post("/api/connectors", json=reg, headers=_H["analyst"]).status_code == 403
+    r = c.post("/api/connectors", json=reg, headers=_H["admin"])
+    assert r.status_code == 201, r.text
+    assert r.json()["health"] == "unknown"  # never run yet
+
+    # any authenticated role can read connector health
+    listed = c.get("/api/connectors", headers=_H["auditor"]).json()
+    assert len(listed) == 1 and listed[0]["connector_id"] == "demo1"
+
+    # admin runs it → healthy (signed manifest + reconciled)
+    run = c.post("/api/connectors/demo1/run", headers=_H["admin"])
+    assert run.status_code == 200, run.text
+    body = run.json()
+    assert body["last_status"] == "ok" and body["last_signed"] and body["last_reconciled"]
+    assert c.get("/api/connectors", headers=_H["admin"]).json()[0]["health"] == "healthy"
+
+
+def test_connector_run_requires_admin_and_known_id():
+    c, _ = _make_client()
+    c.post("/api/connectors", json={"connector_id": "demo2", "kind": "demo-aws"}, headers=_H["admin"])
+    # analyst cannot run
+    assert c.post("/api/connectors/demo2/run", headers=_H["analyst"]).status_code == 403
+    # unknown connector
+    assert c.post("/api/connectors/nope/run", headers=_H["admin"]).status_code == 404
+
+
+def test_connector_tenant_isolation():
+    c, _ = _make_client()
+    c.post("/api/connectors", json={"connector_id": "acme-only", "kind": "demo-aws"}, headers=_H["admin"])
+    # globex admin sees its own (empty) connector list
+    assert c.get("/api/connectors", headers=_H["globex"]).json() == []
 
 
 # ── malformed input handling ──────────────────────────────────────────────────

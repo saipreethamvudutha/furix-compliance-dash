@@ -36,6 +36,19 @@ def _uuid(*parts: str) -> str:
     return str(uuid.uuid5(_OSCAL_NS, "|".join(parts)))
 
 
+def _token(s: str) -> str:
+    """
+    Slugify an arbitrary identifier into a valid OSCAL `token` (the datatype used
+    for objective/target ids): must start with a letter/underscore and contain
+    only letters, digits, '.', '-', '_'. E.g. "Control 5" -> "control-5". The
+    human-readable id is preserved separately (finding title + a prop).
+    """
+    slug = re.sub(r"[^0-9A-Za-z._-]+", "-", s.strip().lower()).strip("-")
+    if not slug or not re.match(r"[A-Za-z_]", slug):
+        slug = f"id-{slug}" if slug else "id"
+    return slug
+
+
 def _metadata(title: str, report: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "title": title,
@@ -70,10 +83,15 @@ def build_assessment_results(report: Mapping[str, Any]) -> dict[str, Any]:
         findings.append({
             "uuid": _uuid("finding", rid, cid),
             "title": f"{cid} — {c.get('title', cid)}",
-            "target": {"type": "objective-id", "target-id": cid,
+            # OSCAL requires a finding description; target-id must be a token, so
+            # the human control id is slugified and preserved in a prop.
+            "description": f"{cid} is at risk: {c.get('violation_count', 0)} violation(s) "
+                           f"observed ({c.get('title', cid)}).",
+            "target": {"type": "objective-id", "target-id": _token(cid),
                        "status": {"state": "not-satisfied"}},
             "related-observations": [{"observation-uuid": obs_uuid}],
-            "props": [{"name": "severity", "value": c.get("worst_severity", "medium")}],
+            "props": [{"name": "severity", "value": c.get("worst_severity", "medium")},
+                      {"name": "furix-control-id", "value": cid}],
         })
     return {
         "assessment-results": {
@@ -91,6 +109,14 @@ def build_assessment_results(report: Mapping[str, Any]) -> dict[str, Any]:
                 "title": "Deterministic control assessment",
                 "description": "Furix event + config-posture assurance run.",
                 "start": report.get("generated_at", ""),
+                # OSCAL requires each result to declare which controls it reviewed.
+                # Furix assesses the full monitored control set.
+                "reviewed-controls": {
+                    "control-selections": [{
+                        "description": "All CIS controls monitored by this Furix run.",
+                        "include-all": {},
+                    }],
+                },
                 "observations": observations,
                 "findings": findings,
             }],
@@ -129,6 +155,9 @@ def build_poam(report: Mapping[str, Any], findings: list[Mapping[str, Any]] | No
             "uuid": risk_uuid,
             "title": f"{cid} at risk",
             "description": f.get("last_reason", f"{cid} at risk"),
+            # OSCAL requires a risk statement (the characterization of the risk).
+            "statement": f"Control {cid} is not satisfied; failure to remediate leaves the "
+                         f"associated framework requirements unmet.",
             "status": "open" if f.get("state") != "risk_accepted" else "deviation-approved",
             "props": [{"name": "risk-level", "value": _RISK.get(f.get("severity", ""), "moderate")}],
         })
@@ -139,19 +168,34 @@ def build_poam(report: Mapping[str, Any], findings: list[Mapping[str, Any]] | No
             "props": props,
             "related-risks": [{"risk-uuid": risk_uuid}],
         })
-    return {
-        "plan-of-action-and-milestones": {
-            "uuid": _uuid("poam", rid),
-            "metadata": _metadata("Furix Plan of Action & Milestones", report),
-            "import-ssp": {"href": "https://furix.local/ssp/monitored-system",
-                           "remarks": "The monitored system is identified by system-id; a full "
-                                      "SSP import is provided by the customer's GRC of record."},
-            "system-id": {"identifier-type": "https://ietf.org/rfc/rfc4122",
-                          "id": _uuid("system", rid)},
-            "risks": risks,
-            "poam-items": items,
-        }
+
+    # OSCAL requires poam-items to be non-empty. When there are genuinely no open
+    # findings, emit one explicit "no open findings" item rather than an empty
+    # (schema-invalid) document — truthful and valid.
+    if not items:
+        items.append({
+            "uuid": _uuid("poam-item", rid, "none"),
+            "title": "No open findings",
+            "description": f"No open findings as of {report.get('generated_at', '')}; "
+                           "no remediation actions are outstanding.",
+            "props": [{"name": "finding-state", "value": "none"}],
+        })
+
+    poam: dict[str, Any] = {
+        "uuid": _uuid("poam", rid),
+        "metadata": _metadata("Furix Plan of Action & Milestones", report),
+        "import-ssp": {"href": "https://furix.local/ssp/monitored-system",
+                       "remarks": "The monitored system is identified by system-id; a full "
+                                  "SSP import is provided by the customer's GRC of record."},
+        "system-id": {"identifier-type": "https://ietf.org/rfc/rfc4122",
+                      "id": _uuid("system", rid)},
+        "poam-items": items,
     }
+    # `risks` is optional and OSCAL forbids an empty array — include it only when
+    # there are risks to report.
+    if risks:
+        poam["risks"] = risks
+    return {"plan-of-action-and-milestones": poam}
 
 
 # ── validator ─────────────────────────────────────────────────────────────────
@@ -212,38 +256,96 @@ def validate_oscal(doc: Mapping[str, Any]) -> list[str]:
 
 import os as _os
 
-# Bundled Furix OSCAL 1.2.1 schema (AR + POA&M subset). FURIX_OSCAL_SCHEMA can
-# point at NIST's full metaschema for exhaustive validation.
-_BUNDLED_SCHEMA = _os.path.join(_os.path.dirname(__file__), "schemas", "oscal-1.2.1-furix.json")
+# The OFFICIAL NIST OSCAL 1.2.1 JSON schemas (released 2026-03-06), bundled from
+# github.com/usnistgov/OSCAL release v1.2.1. Validation is per-document-type: an
+# Assessment Results doc is checked against the AR schema, a POA&M against the
+# POA&M schema. FURIX_OSCAL_SCHEMA overrides with an explicit schema path.
+_SCHEMA_DIR = _os.path.join(_os.path.dirname(__file__), "schemas")
+_NIST_DIR = _os.path.join(_SCHEMA_DIR, "nist")
+_NIST_SCHEMAS = {
+    "assessment-results": _os.path.join(_NIST_DIR, "oscal_assessment-results_schema.json"),
+    "plan-of-action-and-milestones": _os.path.join(_NIST_DIR, "oscal_poam_schema.json"),
+}
+# Legacy Furix subset (kept for reference / offline fallback).
+_BUNDLED_SCHEMA = _os.path.join(_SCHEMA_DIR, "oscal-1.2.1-furix.json")
+
+# XSD/ECMA unicode-property escapes (\p{L}, \p{N}, …) appear in the OSCAL `token`
+# datatype pattern. Python's `re` cannot compile them, so we translate them to
+# equivalent Python character classes for pattern validation. The token values
+# OSCAL constrains here are ASCII identifiers, so the translation is exact for
+# our inputs and never weakens a real constraint into a pass.
+_XSD_PROP = {r"\p{L}": r"[^\W\d_]", r"\p{N}": r"\d", r"\p{Nd}": r"\d",
+             r"\p{Lu}": r"[A-Z]", r"\p{Ll}": r"[a-z]"}
+
+
+def _xsd_pattern_to_python(pattern: str) -> str:
+    for k, v in _XSD_PROP.items():
+        pattern = pattern.replace(k, v)
+    return pattern
+
+
+def _nist_validator(schema: Mapping[str, Any]):
+    """A Draft7 validator whose `pattern` keyword tolerates OSCAL's \\p{...}
+    unicode-property escapes (translated to Python-compatible classes)."""
+    import re as _re
+
+    import jsonschema
+    from jsonschema import Draft7Validator, exceptions
+
+    def _pattern(validator, patrn, instance, _schema):
+        if not validator.is_type(instance, "string"):
+            return
+        try:
+            rx = _re.compile(_xsd_pattern_to_python(patrn))
+        except _re.error:
+            return  # untranslatable pattern: skip rather than emit a false failure
+        if rx.search(instance) is None:
+            yield exceptions.ValidationError(f"{instance!r} does not match {patrn!r}")
+
+    return jsonschema.validators.extend(Draft7Validator, {"pattern": _pattern})(schema)
+
+
+def _schema_for(doc: Mapping[str, Any], override: str | None) -> tuple[str | None, str]:
+    """Resolve (schema_path, kind) for a document. Override wins; otherwise the
+    official NIST schema matching the document root; else the Furix subset."""
+    if override:
+        return override, "override"
+    for root, path in _NIST_SCHEMAS.items():
+        if root in doc and _os.path.exists(path):
+            return path, "NIST OSCAL 1.2.1 (official)"
+    if _os.path.exists(_BUNDLED_SCHEMA):
+        return _BUNDLED_SCHEMA, "Furix OSCAL 1.2.1 subset"
+    return None, "none"
 
 
 def validate_oscal_schema(doc: Mapping[str, Any], schema_path: str | None = None) -> dict[str, Any]:
     """
-    JSON-Schema validate the document (the audit's ask). By default this uses
-    the **bundled** Furix OSCAL 1.2.1 schema; set FURIX_OSCAL_SCHEMA to NIST's
-    full metaschema to validate exhaustively. Structural validation
-    (validate_oscal) always runs too. Returns {ran, ok, errors, schema, note}.
-    Only reports ok=True when BOTH structural and schema validation pass; when
-    `jsonschema` is unavailable it reports ran=False (never a false "valid").
+    JSON-Schema validate an OSCAL document against the **official NIST OSCAL
+    1.2.1 schema** for its type (AR or POA&M), bundled from the NIST v1.2.1
+    release. `FURIX_OSCAL_SCHEMA` (or an explicit `schema_path`) overrides.
+    Structural validation (validate_oscal) always runs too. Returns
+    {ran, ok, errors, schema, note}. ok=True requires BOTH structural and schema
+    validation to pass; when `jsonschema` is unavailable it reports ran=False
+    (never a false "valid").
     """
     import json as _json
     structural = validate_oscal(doc)
-    schema_path = schema_path or _os.environ.get("FURIX_OSCAL_SCHEMA") or _BUNDLED_SCHEMA
-    if not _os.path.exists(schema_path):
+    override = schema_path or _os.environ.get("FURIX_OSCAL_SCHEMA")
+    resolved, kind = _schema_for(doc, override)
+    if not resolved:
         return {"ran": False, "ok": not structural, "errors": structural,
                 "schema": None, "note": "no OSCAL schema file found; structural validation only"}
     try:
-        import jsonschema  # optional dep
+        import jsonschema  # noqa: F401  (optional dep)
     except ImportError:
         return {"ran": False, "ok": not structural, "errors": structural,
-                "schema": schema_path,
+                "schema": resolved,
                 "note": "jsonschema not installed (pip install jsonschema); structural only"}
-    with open(schema_path, encoding="utf-8") as fh:
+    with open(resolved, encoding="utf-8") as fh:
         schema = _json.load(fh)
-    errs = [f"{'/'.join(str(p) for p in e.path)}: {e.message}"
-            for e in jsonschema.Draft202012Validator(schema).iter_errors(doc)]
-    kind = "NIST OSCAL" if schema_path != _BUNDLED_SCHEMA else "Furix OSCAL 1.2.1"
+    errs = [f"{'/'.join(str(p) for p in e.path) or '(root)'}: {e.message}"
+            for e in _nist_validator(schema).iter_errors(doc)]
     return {"ran": True, "ok": not errs and not structural,
-            "errors": structural + errs, "schema": schema_path,
+            "errors": structural + errs, "schema": resolved,
             "note": f"validated against {kind} schema"}
 

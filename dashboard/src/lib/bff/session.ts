@@ -39,39 +39,43 @@ export function newCsrfToken(): string {
   return crypto.randomBytes(24).toString("base64url");
 }
 
-export function sealSession(data: Omit<SessionData, "iat" | "exp" | "csrf"> & { csrf: string }): string {
-  const now = Math.floor(Date.now() / 1000);
-  const payload: SessionData = { ...data, iat: now, exp: now + TTL_SECONDS };
-  const plaintext = Buffer.from(JSON.stringify(payload), "utf8");
+// Generic AES-256-GCM seal/open over the server session key. Used for the
+// session cookie AND the short-lived OIDC transaction cookie (PKCE verifier +
+// state + nonce), so there is a single audited crypto implementation.
+export function sealPayload(obj: unknown): string {
+  const plaintext = Buffer.from(JSON.stringify(obj), "utf8");
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", secretKey(), iv);
   const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const tag = cipher.getAuthTag();
-  // iv.ct.tag, all base64url
   return [iv, ct, tag].map((b) => b.toString("base64url")).join(".");
 }
 
-export function openSession(token: string | undefined): SessionData | null {
+export function openPayload<T>(token: string | undefined): T | null {
   if (!token) return null;
   try {
     const [ivB, ctB, tagB] = token.split(".");
     if (!ivB || !ctB || !tagB) return null;
-    const decipher = crypto.createDecipheriv(
-      "aes-256-gcm",
-      secretKey(),
-      Buffer.from(ivB, "base64url"),
-    );
+    const decipher = crypto.createDecipheriv("aes-256-gcm", secretKey(), Buffer.from(ivB, "base64url"));
     decipher.setAuthTag(Buffer.from(tagB, "base64url"));
-    const pt = Buffer.concat([
-      decipher.update(Buffer.from(ctB, "base64url")),
-      decipher.final(),
-    ]);
-    const data = JSON.parse(pt.toString("utf8")) as SessionData;
-    if (data.exp < Math.floor(Date.now() / 1000)) return null; // expired
-    return data;
+    const pt = Buffer.concat([decipher.update(Buffer.from(ctB, "base64url")), decipher.final()]);
+    return JSON.parse(pt.toString("utf8")) as T;
   } catch {
     return null; // tampered / bad key / malformed
   }
+}
+
+export function sealSession(data: Omit<SessionData, "iat" | "exp" | "csrf"> & { csrf: string }): string {
+  const now = Math.floor(Date.now() / 1000);
+  const payload: SessionData = { ...data, iat: now, exp: now + TTL_SECONDS };
+  return sealPayload(payload);
+}
+
+export function openSession(token: string | undefined): SessionData | null {
+  const data = openPayload<SessionData>(token);
+  if (!data) return null;
+  if (data.exp < Math.floor(Date.now() / 1000)) return null; // expired
+  return data;
 }
 
 // ── cookie helpers ────────────────────────────────────────────────────────────

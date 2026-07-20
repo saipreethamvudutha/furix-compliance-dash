@@ -54,12 +54,57 @@ def test_transient_errors_are_retried():
 
 def test_permanent_failure_aborts():
     c = FakeAwsClient(accounts=_ACCOUNTS, page_size=2, fail_times=99)
-    col = AwsOrgIamCollector(client=c, retry=RetryPolicy(max_attempts=3, base_delay=0.0))
+    col = AwsOrgIamCollector(client=c, signing_secret="s",
+                            retry=RetryPolicy(max_attempts=3, base_delay=0.0))
     try:
         col.collect(collected_at=_NOW)
         raise AssertionError("did not abort on exhausted retries")
     except CollectionError:
         pass
+
+
+# ── mandatory signed manifest (fail-closed) ───────────────────────────────────
+def test_collection_refuses_without_a_signing_secret():
+    c = FakeAwsClient(accounts=_ACCOUNTS, page_size=2)
+    col = AwsOrgIamCollector(client=c, retry=RetryPolicy(base_delay=0.0))  # no secret
+    try:
+        col.collect(collected_at=_NOW)
+        raise AssertionError("collected without a signing secret")
+    except CollectionError as e:
+        assert "signing secret" in str(e)
+
+
+# ── independent population reconciliation ─────────────────────────────────────
+def test_independent_count_is_used_for_reconciliation():
+    out = _collector(independent_count=5).collect(collected_at=_NOW)
+    m = out["manifest"]
+    assert m["reconciliation_basis"] == "independent-ou-tree"
+    assert m["reconciled"] is True and m["expected_accounts"] == 5
+
+
+def test_independent_mismatch_aborts_collection():
+    # the OU-tree says 7 accounts but we only listed 5 → reconciliation gap
+    col = _collector(independent_count=7)
+    try:
+        col.collect(collected_at=_NOW)
+        raise AssertionError("did not abort on independent reconciliation mismatch")
+    except CollectionError as e:
+        assert "reconciliation" in str(e) and "independent-ou-tree" in str(e)
+
+
+# ── durable checkpoints ───────────────────────────────────────────────────────
+def test_durable_checkpoint_persists_and_resumes(tmp_root=None):
+    import tempfile
+
+    from .collectors import CheckpointStore
+    root = tmp_root or tempfile.mkdtemp(prefix="furix_cp_")
+    store = CheckpointStore(root, tenant="acme", connector="aws-org-iam")
+    cp = store.load()
+    _collector().collect(collected_at=_NOW, checkpoint=cp)
+    # a fresh store over the same path sees the persisted cursors
+    reloaded = CheckpointStore(root, tenant="acme", connector="aws-org-iam").load()
+    assert "accounts" in reloaded.cursors
+    assert reloaded.get("accounts") is None  # accounts stage ran to completion
 
 
 # ── permission preflight ──────────────────────────────────────────────────────

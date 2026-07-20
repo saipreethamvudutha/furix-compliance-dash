@@ -185,3 +185,40 @@ export type Finding = {
 export function getFindings(openOnly = true): Promise<Finding[]> {
   return apiGet<Finding[]>(`/api/findings?open_only=${openOnly}`);
 }
+
+// ── connectors: scheduled collection + health (Wave-G) ───────────────────────
+export type Connector = {
+  connector_id: string;
+  tenant: string;
+  kind: string;
+  schedule_seconds: number;
+  enabled: boolean;
+  health: "healthy" | "degraded" | "failed" | "unknown" | string;
+  last_status?: string | null;
+  last_error?: string | null;
+  last_run_at_iso?: string | null;
+  next_run_at_iso?: string | null;
+  last_manifest_sha?: string | null;
+  last_signed: boolean;
+  last_reconciled: boolean;
+};
+
+export function getConnectors(): Promise<Connector[]> {
+  return apiGet<Connector[]>("/api/connectors");
+}
+
+export function registerConnector(
+  connectorId: string,
+  kind = "demo-aws",
+  scheduleSeconds = 86400,
+): Promise<Connector> {
+  return apiPost<Connector>("/api/connectors", {
+    connector_id: connectorId,
+    kind,
+    schedule_seconds: scheduleSeconds,
+  });
+}
+
+export function runConnector(connectorId: string): Promise<Connector> {
+  return apiPost<Connector>(`/api/connectors/${encodeURIComponent(connectorId)}/run`, {});
+}

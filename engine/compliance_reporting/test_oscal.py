@@ -65,7 +65,11 @@ def test_closed_findings_excluded_from_poam():
     findings = [{"finding_id": "f", "control_id": "Control 5", "severity": "low",
                  "state": "closed", "owner": "x"}]
     poam = build_poam(report, findings)
-    assert poam["plan-of-action-and-milestones"]["poam-items"] == []
+    items = poam["plan-of-action-and-milestones"]["poam-items"]
+    # the closed finding produces no remediation item; a single explicit
+    # "no open findings" item is emitted so the POA&M is valid OSCAL (non-empty).
+    assert len(items) == 1 and items[0]["title"] == "No open findings"
+    assert "risks" not in poam["plan-of-action-and-milestones"]  # no empty risks array
 
 
 def test_validator_catches_bad_version_and_dangling_ref():
@@ -91,16 +95,38 @@ def test_oscal_is_deterministic_and_json_serialisable():
     assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
-def test_bundled_schema_validates_real_documents():
-    """The bundled OSCAL 1.2.1 schema validates a real AR and POA&M."""
+def test_exports_validate_against_official_nist_schema():
+    """A real AR and POA&M validate against the OFFICIAL NIST OSCAL 1.2.1 schema."""
     from .oscal import build_poam, validate_oscal_schema
     ar = validate_oscal_schema(build_assessment_results(_report()))
     if not ar["ran"]:
         print("  (skipped: jsonschema not installed)")
         return
     assert ar["ok"] and ar["errors"] == [], ar
-    poam = validate_oscal_schema(build_poam(_report(), []))
-    assert poam["ok"], poam
+    assert "nist/oscal_assessment-results_schema.json" in ar["schema"], ar["schema"]
+    assert "official" in ar["note"], ar["note"]
+
+    # POA&M with real open findings
+    findings = [{"finding_id": "f1", "control_id": "Control 5", "framework_id": "cis_v8",
+                 "state": "open", "severity": "high", "owner": "x", "last_reason": "brute force"}]
+    poam = validate_oscal_schema(build_poam(_report(), findings))
+    assert poam["ok"] and poam["errors"] == [], poam
+    assert "nist/oscal_poam_schema.json" in poam["schema"], poam["schema"]
+
+    # POA&M with no open findings still validates (explicit "no open findings" item)
+    empty = validate_oscal_schema(build_poam(_report(), []))
+    assert empty["ok"], empty
+
+
+def test_target_id_is_a_valid_oscal_token():
+    """Control ids with spaces are slugified into valid OSCAL tokens for target-id,
+    with the human id preserved in a prop."""
+    ar = build_assessment_results(_report())["assessment-results"]
+    for f in ar["results"][0]["findings"]:
+        tid = f["target"]["target-id"]
+        assert " " not in tid and tid == tid.lower(), tid
+        props = {p["name"]: p["value"] for p in f["props"]}
+        assert props["furix-control-id"].startswith("Control ")
 
 
 def test_schema_validation_catches_bad_document():

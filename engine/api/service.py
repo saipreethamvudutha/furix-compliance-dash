@@ -33,6 +33,43 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _demo_aws_client():
+    """A deterministic AWS client for the 'demo-aws' connector kind so the
+    connector-health workflow is exercisable without live AWS credentials."""
+    from compliance_reporting.collectors import FakeAwsClient  # noqa: PLC0415
+    accounts = [{"account_id": f"{i:012d}"} for i in range(1, 4)]
+    keys = {"000000000001": [{"key_id": "AKIADEMO", "status": "active", "age_days": 45}]}
+    summaries = {a["account_id"]: {"root_mfa_enabled": True} for a in accounts}
+    return FakeAwsClient(accounts=accounts, keys_by_account=keys, summaries=summaries,
+                         page_size=2, independent_count=3)
+
+
+def make_connector_runner(tenant: str, signing_secret: str) -> Callable[[Mapping[str, Any]], dict]:
+    """Build a runner(job)->manifest for the ConnectorScheduler. Dispatches on
+    the job 'kind': 'demo-aws' (deterministic, no creds) or 'aws-org-iam' (the
+    live boto3 collector). Manifests are mandatory-signed (fail-closed)."""
+    from compliance_reporting.collectors import AwsOrgIamCollector, RetryPolicy  # noqa: PLC0415
+
+    def runner(job: Mapping[str, Any]) -> dict:
+        kind = job["kind"]
+        cfg = job.get("config", {}) or {}
+        if kind == "demo-aws":
+            client = _demo_aws_client()
+        elif kind == "aws-org-iam":
+            from compliance_reporting.aws_boto3 import Boto3AwsClient  # noqa: PLC0415
+            client = Boto3AwsClient(
+                member_role_name=cfg.get("member_role_name", "OrganizationAccountAccessRole"),
+                org_role_arn=cfg.get("org_role_arn"), external_id=cfg.get("external_id"),
+                region=cfg.get("region", "us-east-1"))
+        else:
+            raise ValueError(f"unknown connector kind {kind!r}")
+        collector = AwsOrgIamCollector(client=client, tenant=tenant, signing_secret=signing_secret,
+                                       retry=RetryPolicy(base_delay=0.0))
+        return collector.collect(collected_at=now_iso())["manifest"]
+
+    return runner
+
+
 def split_log_lines(text: str) -> list[str]:
     """One event per line (the log_ingest.py model). Blank lines dropped."""
     return [ln.strip() for ln in text.splitlines() if ln.strip()]
