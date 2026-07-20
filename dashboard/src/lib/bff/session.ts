@@ -17,6 +17,7 @@ export type SessionData = {
   role: string; // admin | analyst | auditor | mssp
   tenant: string;
   csrf: string;
+  sid: string; // unique session id (for server-side revocation)
   iat: number;
   exp: number;
 };
@@ -65,9 +66,20 @@ export function openPayload<T>(token: string | undefined): T | null {
   }
 }
 
-export function sealSession(data: Omit<SessionData, "iat" | "exp" | "csrf"> & { csrf: string }): string {
+export function newSessionId(): string {
+  return crypto.randomBytes(18).toString("base64url");
+}
+
+export function sealSession(
+  data: Omit<SessionData, "iat" | "exp" | "csrf" | "sid"> & { csrf: string; sid?: string },
+): string {
   const now = Math.floor(Date.now() / 1000);
-  const payload: SessionData = { ...data, iat: now, exp: now + TTL_SECONDS };
+  const payload: SessionData = {
+    ...data,
+    sid: data.sid ?? newSessionId(),
+    iat: now,
+    exp: now + TTL_SECONDS,
+  };
   return sealPayload(payload);
 }
 

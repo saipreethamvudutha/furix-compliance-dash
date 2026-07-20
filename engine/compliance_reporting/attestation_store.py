@@ -26,8 +26,8 @@ re-submitting the identical attestation is idempotent.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
-from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any, Mapping
@@ -54,10 +54,17 @@ def attestation_id(att: Mapping[str, Any]) -> str:
 class AttestationStore:
     """Durable, tenant-scoped attestation submission/approval store."""
 
-    def __init__(self, root: Path | str):
+    def __init__(self, root: Path | str, *, required_approvals: int | None = None):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "attestations.db"
+        # Two-person rule: an attestation needs this many DISTINCT approvers, none
+        # of whom is the submitter — so at least (1 + required_approvals) people
+        # touch it. Default 1 (submitter + one independent approver = two people);
+        # raise FURIX_ATTEST_REQUIRED_APPROVALS for higher assurance.
+        if required_approvals is None:
+            required_approvals = int(os.environ.get("FURIX_ATTEST_REQUIRED_APPROVALS", "1"))
+        self.required_approvals = max(1, required_approvals)
         self._lock = Lock()
         self._conn = sqlite3.connect(str(self.path), timeout=30, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -74,6 +81,8 @@ class AttestationStore:
                    decided_by TEXT,
                    decided_at TEXT,
                    decision_reason TEXT,
+                   approvals TEXT NOT NULL DEFAULT '[]',
+                   required_approvals INTEGER NOT NULL DEFAULT 1,
                    verification_status TEXT NOT NULL,
                    verification_reasons TEXT NOT NULL,
                    attestation_json TEXT NOT NULL
@@ -83,11 +92,14 @@ class AttestationStore:
 
     # ── low level ────────────────────────────────────────────────────────────────
     def _row(self, row: sqlite3.Row) -> dict[str, Any]:
+        approvals = json.loads(row["approvals"])
         return {
             "att_id": row["att_id"], "tenant": row["tenant"], "spec_id": row["spec_id"],
             "status": row["status"], "submitted_by": row["submitted_by"],
             "submitted_at": row["submitted_at"], "decided_by": row["decided_by"],
             "decided_at": row["decided_at"], "decision_reason": row["decision_reason"],
+            "approvals": approvals, "approvals_count": len(approvals),
+            "required_approvals": row["required_approvals"],
             "verification": {"status": row["verification_status"],
                              "reasons": json.loads(row["verification_reasons"])},
             "attestation": json.loads(row["attestation_json"]),
@@ -122,39 +134,65 @@ class AttestationStore:
                 return existing  # idempotent re-submit
             self._conn.execute(
                 "INSERT INTO attestations (att_id, tenant, spec_id, status, submitted_by, "
-                "submitted_at, decided_by, decided_at, decision_reason, verification_status, "
-                "verification_reasons, attestation_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "submitted_at, decided_by, decided_at, decision_reason, approvals, "
+                "required_approvals, verification_status, verification_reasons, attestation_json) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (att_id, tenant, att.get("spec_id"), SUBMITTED, submitted_by, submitted_at,
-                 None, None, None, status, json.dumps(reasons),
+                 None, None, None, "[]", self.required_approvals, status, json.dumps(reasons),
                  json.dumps(dict(att), sort_keys=True)),
             )
         return self._require(tenant, att_id)
 
     def approve(self, att_id: str, *, tenant: str, approved_by: str, decided_at: str,
                 reason: str = "") -> dict[str, Any]:
-        """Approve a SUBMITTED attestation (SUBMITTED → APPROVED)."""
-        return self._decide(att_id, tenant=tenant, to=APPROVED, actor=approved_by,
-                            decided_at=decided_at, reason=reason)
+        """
+        Record an approval under the TWO-PERSON rule (segregation of duty):
 
-    def reject(self, att_id: str, *, tenant: str, rejected_by: str, decided_at: str,
-               reason: str = "") -> dict[str, Any]:
-        """Reject a SUBMITTED attestation (SUBMITTED → REJECTED)."""
-        return self._decide(att_id, tenant=tenant, to=REJECTED, actor=rejected_by,
-                            decided_at=decided_at, reason=reason)
+        * the submitter can NEVER approve their own attestation,
+        * each distinct approver counts once,
+        * the attestation only becomes APPROVED once `required_approvals` DISTINCT
+          non-submitter approvals are recorded.
 
-    def _decide(self, att_id: str, *, tenant: str, to: str, actor: str,
-                decided_at: str, reason: str) -> dict[str, Any]:
+        Until then it stays SUBMITTED (pending) and therefore cannot back a PASS.
+        """
         with self._lock, self._conn:
             current = self._get_locked(tenant, att_id)
             if not current:
                 raise AttestationError(f"unknown attestation {att_id} for tenant {tenant}")
             if current["status"] != SUBMITTED:
+                raise AttestationError(f"cannot approve attestation in state {current['status']!r}")
+            if approved_by == current["submitted_by"]:
                 raise AttestationError(
-                    f"cannot {to} attestation in state {current['status']!r}")
+                    "self-approval is forbidden — an attestation must be approved by someone "
+                    "other than its submitter (two-person rule)")
+            approvals = current["approvals"]
+            if any(a["by"] == approved_by for a in approvals):
+                raise AttestationError(f"{approved_by} has already approved this attestation")
+            approvals.append({"by": approved_by, "at": decided_at, "reason": reason})
+            reached = len(approvals) >= current["required_approvals"]
+            self._conn.execute(
+                "UPDATE attestations SET approvals=?, status=?, decided_by=?, decided_at=?, "
+                "decision_reason=? WHERE att_id=? AND tenant=?",
+                (json.dumps(approvals), APPROVED if reached else SUBMITTED,
+                 approved_by if reached else None, decided_at if reached else None,
+                 reason if reached else None, att_id, tenant),
+            )
+        return self._require(tenant, att_id)
+
+    def reject(self, att_id: str, *, tenant: str, rejected_by: str, decided_at: str,
+               reason: str = "") -> dict[str, Any]:
+        """Reject a SUBMITTED attestation (SUBMITTED → REJECTED). A single
+        reviewer may reject; approval requires the two-person rule above."""
+        with self._lock, self._conn:
+            current = self._get_locked(tenant, att_id)
+            if not current:
+                raise AttestationError(f"unknown attestation {att_id} for tenant {tenant}")
+            if current["status"] != SUBMITTED:
+                raise AttestationError(f"cannot reject attestation in state {current['status']!r}")
             self._conn.execute(
                 "UPDATE attestations SET status=?, decided_by=?, decided_at=?, decision_reason=? "
                 "WHERE att_id=? AND tenant=?",
-                (to, actor, decided_at, reason, att_id, tenant),
+                (REJECTED, rejected_by, decided_at, reason, att_id, tenant),
             )
         return self._require(tenant, att_id)
 

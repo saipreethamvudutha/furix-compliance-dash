@@ -78,10 +78,18 @@ def make_connector_runner(tenant: str, signing_secret: str) -> Callable[[Mapping
     return runner
 
 
+DEMO_CONNECTOR_KINDS = frozenset({"demo-aws"})
+
+
+def is_demo_kind(kind: str) -> bool:
+    return kind in DEMO_CONNECTOR_KINDS
+
+
 def run_posture(store: ReportStore, *, tenant: str, snapshot: Mapping[str, Any],
                 manifest: Mapping[str, Any] | None = None, connector_id: str | None = None,
                 registry: FrameworkRegistry | None = None, occurred_at: str,
-                actor: str = "system", run_id: str | None = None) -> dict[str, Any]:
+                actor: str = "system", run_id: str | None = None,
+                data_mode: str = "live") -> dict[str, Any]:
     """
     The unified posture-run pipeline (Wave-H): raw snapshot → immutable evidence
     → reconciliation (from the signed manifest) → config assertions → verified
@@ -139,6 +147,7 @@ def run_posture(store: ReportStore, *, tenant: str, snapshot: Mapping[str, Any],
         f"{tenant}|{report_id}|{snapshot.get('collected_at', '')}".encode()).hexdigest()[:20])
     run = {
         "run_id": run_id, "tenant": tenant, "connector_id": connector_id,
+        "data_mode": data_mode,   # "demo" (synthetic) | "live" — isolates demo evidence
         "started_at": started, "completed_at": now_iso(), "status": "completed",
         "collection": {
             "manifest_sha256": m.get("resource_sha256"), "signed": bool(m.get("signature")),

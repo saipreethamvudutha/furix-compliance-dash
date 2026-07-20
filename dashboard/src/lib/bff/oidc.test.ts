@@ -18,6 +18,7 @@ import {
   openTx,
   pkceChallenge,
   randomUrlToken,
+  safeReturnTo,
   sealTx,
   verifyIdToken,
 } from "./oidc.ts";
@@ -235,6 +236,41 @@ test("openTx returns null on a tampered cookie", () => {
 });
 
 // ── config gating ─────────────────────────────────────────────────────────────
+// ── trust-boundary hardening (Wave-I / Epic 3) ────────────────────────────────
+test("safeReturnTo blocks open redirects", () => {
+  assert.equal(safeReturnTo("/reports"), "/reports");
+  assert.equal(safeReturnTo("//evil.com"), "/"); // protocol-relative
+  assert.equal(safeReturnTo("https://evil.com"), "/"); // absolute
+  assert.equal(safeReturnTo("/\\evil.com"), "/"); // backslash trick
+  assert.equal(safeReturnTo(undefined), "/");
+});
+
+test("verifyIdToken rejects a token issued in the future", () => {
+  assert.throws(
+    () => verifyIdToken(mintIdToken(baseClaims({ iat: 999999 })),
+      { jwks: JWKS, issuer: ISSUER, audience: "furix-client", nonce: "the-nonce", now: 1000 }),
+    /issued in the future/,
+  );
+});
+
+test("claimsToSession ignores an unverified email (no takeover)", () => {
+  const s = claimsToSession(
+    baseClaims({ email: "victim@corp.com", email_verified: false }) as never, CFG);
+  assert.equal(s.sub, "user-123"); // falls back to sub, NOT the unverified email
+});
+
+test("claimsToSession uses a verified email as subject", () => {
+  const s = claimsToSession(baseClaims({ email_verified: true }) as never, CFG);
+  assert.equal(s.sub, "alice@example.com");
+});
+
+test("id token verification tolerates the injected fetch (timeout wrapper is transparent)", async () => {
+  const f = mockFetch();
+  const disc = await discover(ISSUER, f, 42);
+  const tokens = await exchangeCode(disc, CFG, "code", "verifier", f);
+  assert.ok(tokens.id_token);
+});
+
 test("oidcConfigFromEnv requires issuer, client id and redirect uri", () => {
   assert.equal(oidcConfigFromEnv({} as never), null);
   const cfg = oidcConfigFromEnv({

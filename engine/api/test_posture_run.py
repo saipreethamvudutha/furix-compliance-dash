@@ -50,6 +50,17 @@ def test_posture_run_links_every_stage():
     assert run["evidence"]["raw_uri"].startswith("furix-evidence://")
     assert run["evaluation"]["assertion_total"] >= 1
     assert run["report_id"] and run["verified"] is True
+    assert run["data_mode"] in ("demo", "live")
+
+
+def test_demo_data_mode_isolates_synthetic_runs():
+    store = _store()
+    out = _collect()
+    run = service.run_posture(store, tenant="acme", snapshot=out["snapshot"],
+                              manifest=out["manifest"], registry=_REG, occurred_at=_NOW,
+                              data_mode="demo")
+    assert run["data_mode"] == "demo"
+    assert service.is_demo_kind("demo-aws") and not service.is_demo_kind("aws-org-iam")
 
 
 def test_snapshot_evidence_is_immutably_retained():

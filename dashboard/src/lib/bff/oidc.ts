@@ -13,6 +13,35 @@ import fs from "node:fs";
 
 export type Fetch = typeof fetch;
 
+// All IdP calls get a bounded timeout so a hung/slow provider can't stall the
+// request indefinitely (deployment/trust hardening).
+const DEFAULT_TIMEOUT_MS = 5000;
+
+async function fetchWithTimeout(
+  fetchImpl: Fetch,
+  url: string,
+  init: RequestInit = {},
+  ms = DEFAULT_TIMEOUT_MS,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetchImpl(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Open-redirect defence: only same-origin relative paths are allowed as the
+// post-login destination. Rejects absolute URLs and protocol-relative "//host".
+export function safeReturnTo(returnTo: string | undefined | null): string {
+  if (!returnTo) return "/";
+  if (!returnTo.startsWith("/") || returnTo.startsWith("//") || returnTo.startsWith("/\\")) {
+    return "/";
+  }
+  return returnTo;
+}
+
 // Docker-secrets-friendly resolution (kept local so this module stays free of
 // relative imports and runs under Node's type-stripping test loader).
 function fileEnv(env: NodeJS.ProcessEnv, name: string): string {
@@ -125,7 +154,7 @@ export async function discover(
   const cached = _discoveryCache.get(base);
   if (cached && now - cached.at < DISCOVERY_TTL_MS) return cached.doc;
   const url = `${base}/.well-known/openid-configuration`;
-  const res = await fetchImpl(url);
+  const res = await fetchWithTimeout(fetchImpl, url);
   if (!res.ok) throw new Error(`OIDC discovery failed (${res.status}) at ${url}`);
   const doc = (await res.json()) as Discovery;
   for (const k of ["issuer", "authorization_endpoint", "token_endpoint", "jwks_uri"] as const) {
@@ -180,7 +209,8 @@ export async function exchangeCode(
     headers.authorization =
       "Basic " + Buffer.from(`${cfg.clientId}:${cfg.clientSecret}`).toString("base64");
   }
-  const res = await fetchImpl(disc.token_endpoint, { method: "POST", headers, body: body.toString() });
+  const res = await fetchWithTimeout(fetchImpl, disc.token_endpoint,
+    { method: "POST", headers, body: body.toString() });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`OIDC token exchange failed (${res.status}): ${text.slice(0, 200)}`);
@@ -194,7 +224,7 @@ export async function exchangeCode(
 type Jwk = { kty: string; kid?: string; alg?: string; use?: string; n?: string; e?: string };
 
 export async function fetchJwks(jwksUri: string, fetchImpl: Fetch = fetch): Promise<Jwk[]> {
-  const res = await fetchImpl(jwksUri);
+  const res = await fetchWithTimeout(fetchImpl, jwksUri);
   if (!res.ok) throw new Error(`JWKS fetch failed (${res.status})`);
   const doc = (await res.json()) as { keys?: Jwk[] };
   return doc.keys ?? [];
@@ -247,6 +277,9 @@ export function verifyIdToken(
   const auds = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (!auds.includes(opts.audience)) throw new Error("id_token audience mismatch");
   if (typeof claims.exp !== "number" || now > claims.exp + leeway) throw new Error("id_token expired");
+  if (typeof claims.iat === "number" && claims.iat > now + leeway) {
+    throw new Error("id_token issued in the future (clock skew or forgery)");
+  }
   if (claims.nonce !== opts.nonce) throw new Error("id_token nonce mismatch (possible replay)");
   return claims;
 }
@@ -260,7 +293,10 @@ export function claimsToSession(
   const role = typeof roleRaw === "string" && roleRaw ? roleRaw : cfg.defaultRole;
   const tenantRaw = claims[cfg.tenantClaim];
   const tenant = typeof tenantRaw === "string" && tenantRaw ? tenantRaw : cfg.defaultTenant;
-  const sub = (typeof claims.email === "string" && claims.email) || claims.sub;
+  // Use email as the subject only when the IdP asserts it is verified — an
+  // unverified email must not become an identity (account-takeover defence).
+  const emailOk = typeof claims.email === "string" && claims.email && claims.email_verified !== false;
+  const sub = emailOk ? (claims.email as string) : claims.sub;
   return { sub, role, tenant };
 }
 

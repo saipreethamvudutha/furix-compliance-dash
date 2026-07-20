@@ -14,6 +14,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { isProd, prodReadiness, readSecret } from "@/lib/bff/env";
+import { isRevoked } from "@/lib/bff/revocation";
 import { openSession, readCsrfCookie, readSessionCookie } from "@/lib/bff/session";
 import { bffAllows, mintUserToken } from "@/lib/bff/token";
 
@@ -54,6 +55,9 @@ async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
   const session = openSession(readSessionCookie(cookieHeader));
   if (!isHealth) {
     if (!session) return unauth("not authenticated — sign in");
+    // server-side revocation: a logged-out or admin-killed session is rejected
+    // immediately, even though its sealed cookie has not yet expired.
+    if (isRevoked(session)) return unauth("session revoked — sign in again");
     // server-side RBAC (defense in depth; the API enforces fine-grained scopes)
     if (!bffAllows(session.role, req.method, apiPath)) {
       return unauth(`role '${session.role}' may not ${req.method} ${apiPath}`, 403);

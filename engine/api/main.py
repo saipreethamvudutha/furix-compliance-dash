@@ -92,6 +92,16 @@ def _connector_registry_for(tenant: str) -> ConnectorRegistry:
 # (Docker-secret-friendly via FURIX_CONNECTOR_SIGNING_SECRET_FILE).
 _CONNECTOR_SIGNING_SECRET = read_secret("FURIX_CONNECTOR_SIGNING_SECRET", "")
 
+
+def _reject_demo_in_prod(kind: str) -> None:
+    """Demo-tenant isolation: synthetic/demo connectors are refused in production
+    so demo evidence can never be mistaken for, or mixed into, a real tenant."""
+    if service.is_demo_kind(kind) and os.environ.get("FURIX_ENV", "development").lower() == "production":
+        raise HTTPException(
+            status_code=400,
+            detail=f"demo connector kind {kind!r} is disabled in production — demo/synthetic "
+                   "data is isolated from production tenants")
+
 # Hardening knobs (env-overridable)
 _MAX_BODY_BYTES = int(os.environ.get("FURIX_MAX_BODY_BYTES", str(50 * 1024 * 1024)))  # 50 MB
 _MAX_INGEST_CHARS = int(os.environ.get("FURIX_MAX_INGEST_CHARS", str(20 * 1024 * 1024)))
@@ -460,7 +470,8 @@ def approve_attestation(att_id: str, body: AttestationDecisionBody,
             att_id, tenant=tn, approved_by=principal.key_id, decided_at=body.decided_at,
             reason=body.reason)
     except AttestationError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # unknown id → 404; a rule violation (self-approval, duplicate, bad state) → 400
+        raise HTTPException(status_code=404 if "unknown" in str(e) else 400, detail=str(e))
 
 
 @app.post("/api/attestations/{att_id}/reject")
@@ -474,7 +485,7 @@ def reject_attestation(att_id: str, body: AttestationDecisionBody,
             att_id, tenant=tn, rejected_by=principal.key_id, decided_at=body.decided_at,
             reason=body.reason)
     except AttestationError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404 if "unknown" in str(e) else 400, detail=str(e))
 
 
 # ── connectors: scheduled collection + health (Wave-G) ────────────────────────
@@ -509,6 +520,7 @@ def register_connector(body: ConnectorBody,
         raise HTTPException(status_code=403, detail="registering a connector requires admin authority")
     if body.schedule_seconds < 60:
         raise HTTPException(status_code=400, detail="schedule_seconds must be >= 60")
+    _reject_demo_in_prod(body.kind)
     tn = principal.tenant_id
     now = int(time.time())
     reg = _connector_registry_for(tn)
@@ -530,8 +542,10 @@ def run_connector(connector_id: str,
                                    "(set FURIX_CONNECTOR_SIGNING_SECRET); manifests are mandatory-signed")
     tn = principal.tenant_id
     reg = _connector_registry_for(tn)
-    if reg.get(tn, connector_id) is None:
+    job = reg.get(tn, connector_id)
+    if job is None:
         raise HTTPException(status_code=404, detail=f"unknown connector {connector_id}")
+    _reject_demo_in_prod(job["kind"])
     runner = service.make_connector_runner(tn, secret)
     return ConnectorScheduler(reg).run_one(tn, connector_id, runner, now=int(time.time()))
 
@@ -554,13 +568,16 @@ def connector_posture_run(connector_id: str,
     job = reg.get(tn, connector_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"unknown connector {connector_id}")
+    _reject_demo_in_prod(job["kind"])
     store = _store_for(principal, None)
     now = int(time.time())
+    data_mode = "demo" if service.is_demo_kind(job["kind"]) else "live"
     try:
         collected = service.collect_snapshot(tn, job["kind"], job.get("config", {}) or {}, secret)
         run = service.run_posture(store, tenant=tn, snapshot=collected["snapshot"],
                                   manifest=collected["manifest"], connector_id=connector_id,
-                                  occurred_at=service.now_iso(), actor=principal.key_id)
+                                  occurred_at=service.now_iso(), actor=principal.key_id,
+                                  data_mode=data_mode)
         reg.record_run(tn, connector_id, now=now, manifest=collected["manifest"], error=None)
         return run
     except Exception as e:  # noqa: BLE001 - record the failure on the connector, surface 422

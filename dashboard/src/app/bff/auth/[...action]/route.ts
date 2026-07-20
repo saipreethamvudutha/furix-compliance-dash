@@ -23,10 +23,12 @@ import {
   pkceChallenge,
   randomUrlToken,
   readTxCookie,
+  safeReturnTo,
   sealTx,
   txCookie,
   verifyIdToken,
 } from "@/lib/bff/oidc";
+import { revokeAllForSubject, revokeSession } from "@/lib/bff/revocation";
 import {
   clearCookies,
   csrfCookie,
@@ -36,6 +38,10 @@ import {
   sealSession,
   sessionCookie,
 } from "@/lib/bff/session";
+
+function nowEpoch(): number {
+  return Math.floor(Date.now() / 1000);
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,7 +55,26 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
   const head = action[0];
 
   if (head === "logout") {
+    // server-side revocation: kill the exact session id so a copied cookie is
+    // dead immediately, not just cleared from this browser.
+    const session = openSession(readSessionCookie(req.headers.get("cookie")));
+    if (session?.sid) revokeSession(session.sid, nowEpoch());
     const res = NextResponse.json({ ok: true });
+    for (const c of clearCookies()) res.headers.append("set-cookie", c);
+    return res;
+  }
+
+  if (head === "revoke-all") {
+    // sign-out-everywhere: revoke every session for this subject issued before
+    // now (suspected compromise / password change).
+    const session = openSession(readSessionCookie(req.headers.get("cookie")));
+    if (!session) return NextResponse.json({ error: "not authenticated" }, { status: 401 });
+    // CSRF double-submit (this action logs the subject out everywhere)
+    if (req.headers.get("x-csrf-token") !== session.csrf) {
+      return NextResponse.json({ error: "CSRF token missing or invalid" }, { status: 403 });
+    }
+    revokeAllForSubject(session.sub, nowEpoch());
+    const res = NextResponse.json({ ok: true, revoked_subject: session.sub });
     for (const c of clearCookies()) res.headers.append("set-cookie", c);
     return res;
   }
@@ -163,7 +188,7 @@ async function oidcCallback(req: NextRequest): Promise<NextResponse> {
     const { sub, role, tenant } = claimsToSession(claims, cfg);
     const csrf = newCsrfToken();
     const token = sealSession({ sub, role, tenant, csrf });
-    const dest = new URL(tx.returnTo.startsWith("/") ? tx.returnTo : "/", req.nextUrl.origin);
+    const dest = new URL(safeReturnTo(tx.returnTo), req.nextUrl.origin);
     const res = NextResponse.redirect(dest, 302);
     res.headers.append("set-cookie", sessionCookie(token));
     res.headers.append("set-cookie", csrfCookie(csrf));

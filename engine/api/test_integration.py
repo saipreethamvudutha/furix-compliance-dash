@@ -197,6 +197,18 @@ def test_attestation_approval_requires_admin_and_gates_availability():
     assert len(approved) == 1 and approved[0]["status"] == "approved"
 
 
+def test_attestation_self_approval_is_forbidden():
+    c, _ = _make_client()
+    body = {"attestation": _demo_att(), "as_of": "2026-07-19T12:00:00+00:00"}
+    # admin submits AND tries to approve their own → two-person rule blocks it (400)
+    sub = c.post("/api/attestations", json=body, headers=_H["admin"]).json()
+    dec = {"decided_at": "2026-07-19T13:00:00+00:00"}
+    r = c.post(f"/api/attestations/{sub['att_id']}/approve", json=dec, headers=_H["admin"])
+    assert r.status_code == 400 and "self-approval" in r.json()["detail"]
+    # still not available to a report
+    assert c.get("/api/attestations?status=approved", headers=_H["auditor"]).json() == []
+
+
 def test_attestation_tenant_isolation():
     c, _ = _make_client()
     body = {"attestation": _demo_att("acme"), "as_of": "2026-07-19T12:00:00+00:00"}
@@ -267,6 +279,24 @@ def test_posture_run_links_every_stage_via_api():
     assert got.status_code == 200 and got.json()["report_id"] == run["report_id"]
     # the linked report is now the tenant's latest, and OSCAL export schema-validates
     assert c.get("/api/audit/export", headers=_H["admin"]).json()["oscal"]["validation_ok"] is True
+
+
+def test_demo_connectors_blocked_in_production():
+    c, _ = _make_client()
+    os.environ["FURIX_ENV"] = "production"
+    try:
+        r = c.post("/api/connectors", json={"connector_id": "demo-prod", "kind": "demo-aws"},
+                   headers=_H["admin"])
+        assert r.status_code == 400 and "disabled in production" in r.json()["detail"]
+    finally:
+        os.environ["FURIX_ENV"] = "development"
+
+
+def test_posture_run_records_data_mode():
+    c, _ = _make_client()
+    c.post("/api/connectors", json={"connector_id": "pr-dm", "kind": "demo-aws"}, headers=_H["admin"])
+    run = c.post("/api/connectors/pr-dm/posture-run", headers=_H["admin"]).json()
+    assert run["data_mode"] == "demo"
 
 
 def test_posture_run_tenant_isolation():

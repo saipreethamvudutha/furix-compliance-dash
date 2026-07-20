@@ -114,6 +114,40 @@ def test_double_approve_is_illegal():
         pass
 
 
+# ── two-person rule (segregation of duty) ─────────────────────────────────────
+def test_submitter_cannot_self_approve():
+    s = _store()
+    rec = s.submit(_att(), tenant="acme", keyring=_RING, submitted_by="ciso@acme",
+                   submitted_at=_GEN, as_of=_GEN)
+    try:
+        s.approve(rec["att_id"], tenant="acme", approved_by="ciso@acme", decided_at=_GEN)
+        assert False, "expected AttestationError (self-approval)"
+    except AttestationError as e:
+        assert "self-approval" in str(e)
+    # still pending → cannot back a report
+    assert s.approved_attestations("acme") == []
+
+
+def test_quorum_requires_two_distinct_approvers():
+    s = AttestationStore(tempfile.mkdtemp(prefix="furix_att2_"), required_approvals=2)
+    rec = s.submit(_att(), tenant="acme", keyring=_RING, submitted_by="ciso@acme",
+                   submitted_at=_GEN, as_of=_GEN)
+    # first approval: still pending (needs 2 distinct)
+    r1 = s.approve(rec["att_id"], tenant="acme", approved_by="grc@acme", decided_at=_GEN)
+    assert r1["status"] == "submitted" and r1["approvals_count"] == 1
+    assert s.approved_attestations("acme") == []
+    # same approver again → rejected
+    try:
+        s.approve(rec["att_id"], tenant="acme", approved_by="grc@acme", decided_at=_GEN)
+        assert False, "expected AttestationError (duplicate approver)"
+    except AttestationError:
+        pass
+    # a second DISTINCT approver reaches quorum → APPROVED
+    r2 = s.approve(rec["att_id"], tenant="acme", approved_by="ciso2@acme", decided_at=_GEN)
+    assert r2["status"] == "approved" and r2["approvals_count"] == 2
+    assert len(s.approved_attestations("acme")) == 1
+
+
 if __name__ == "__main__":
     import sys
     import traceback
