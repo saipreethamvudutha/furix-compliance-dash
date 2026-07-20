@@ -4,7 +4,7 @@
 // ============================================================
 
 import type { ComplianceFramework } from "./types";
-import { apiGet, apiPost, safeGet, API_BASE } from "./client";
+import { apiGet, apiPost, apiPut, safeGet, API_BASE } from "./client";
 
 export type FrameworkKpi = {
   id: string;
@@ -254,4 +254,86 @@ export function runPosture(connectorId: string): Promise<PostureRun> {
 
 export function getPostureRuns(): Promise<PostureRun[]> {
   return apiGet<PostureRun[]>("/api/posture-runs");
+}
+
+// ── compliance workspace (Wave-I / Epic 4) ───────────────────────────────────
+export type ControlSummary = {
+  control_id: string;
+  title: string;
+  status: string;
+  owner: string;
+  applicability: string;
+  verification_method: string;
+  test_cadence_days: number;
+  evidence_freshness: "fresh" | "stale" | "unknown" | string;
+  last_assessed: string | null;
+  open_findings: number;
+  framework_counts: { nist_csf: number; pci_dss: number; hipaa: number };
+};
+
+export type ControlProfile = {
+  owner: string;
+  applicability: string;
+  applicability_rationale: string;
+  implementation_narrative: string;
+  verification_method: string;
+  verification_description: string;
+  test_cadence_days: number;
+  updated_at: string | null;
+  updated_by: string | null;
+  configured: boolean;
+};
+
+export type ControlDetail = {
+  control_id: string;
+  title: string;
+  status: string;
+  worst_severity?: string | null;
+  profile: ControlProfile;
+  evidence_freshness: string;
+  last_assessed: string | null;
+  framework_mappings: { nist_csf: string[]; pci_dss: string[]; hipaa: string[] };
+  linked_findings: Finding[];
+  exceptions: Array<Record<string, unknown>>;
+  evidence_lineage: {
+    report_id: string | null;
+    report_integrity_sha256: string | null;
+    evidence_mode?: string;
+    config_passing: string[];
+    config_failing: string[];
+    passing_tests: string[];
+    failing_tests: string[];
+    posture_run: {
+      run_id: string;
+      data_mode?: string;
+      snapshot_sha256: string;
+      snapshot_uri: string;
+      report_id: string;
+    } | null;
+  };
+};
+
+export type ControlProfilePatch = Partial<{
+  owner: string;
+  applicability: string;
+  applicability_rationale: string;
+  implementation_narrative: string;
+  verification_method: string;
+  verification_description: string;
+  test_cadence_days: number;
+}>;
+
+export function listControlWorkspace(): Promise<ControlSummary[]> {
+  return apiGet<ControlSummary[]>("/api/compliance/controls");
+}
+
+export function getControlWorkspace(controlId: string): Promise<ControlDetail> {
+  return apiGet<ControlDetail>(`/api/compliance/controls/${encodeURIComponent(controlId)}`);
+}
+
+export function updateControlProfile(
+  controlId: string,
+  patch: ControlProfilePatch,
+): Promise<ControlProfile> {
+  return apiPut<ControlProfile>(`/api/compliance/controls/${encodeURIComponent(controlId)}`, patch);
 }

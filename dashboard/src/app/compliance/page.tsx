@@ -79,13 +79,21 @@ export default function CompliancePage() {
             CIS · NIST CSF · HIPAA · PCI DSS — SCF-derived, deterministically evaluated.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={load}
-          className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
-        >
-          <RefreshCw className="h-3.5 w-3.5" /> Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/compliance/controls"
+            className="inline-flex items-center gap-1.5 rounded-md bg-[var(--furix-accent,#c2703d)] px-3 py-1.5 text-sm font-medium text-white"
+          >
+            <ShieldCheck className="h-3.5 w-3.5" /> Control workspace
+          </Link>
+          <button
+            type="button"
+            onClick={load}
+            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Refresh
+          </button>
+        </div>
       </header>
 
       {loading && (

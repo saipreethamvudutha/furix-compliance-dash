@@ -93,6 +93,17 @@ def _connector_registry_for(tenant: str) -> ConnectorRegistry:
 _CONNECTOR_SIGNING_SECRET = read_secret("FURIX_CONNECTOR_SIGNING_SECRET", "")
 
 
+# Framework crosswalk registry — built once (live DB, else bundled snapshot).
+_registry_cache: list = []
+
+
+def _registry():
+    if not _registry_cache:
+        from compliance_reporting.registry import FrameworkRegistry  # noqa: PLC0415
+        _registry_cache.append(FrameworkRegistry.from_live())
+    return _registry_cache[0]
+
+
 def _reject_demo_in_prod(kind: str) -> None:
     """Demo-tenant isolation: synthetic/demo connectors are refused in production
     so demo evidence can never be mistaken for, or mixed into, a real tenant."""
@@ -600,6 +611,46 @@ def posture_run(run_id: str,
     tn = tenant or principal.tenant_id
     _store_for(principal, tenant)
     return _handle(service.get_posture_run, _stores.for_tenant(tn), tn, run_id)
+
+
+# ── compliance workspace (Wave-I / Epic 4) ────────────────────────────────────
+class ControlProfileBody(BaseModel):
+    owner: str | None = None
+    applicability: str | None = None
+    applicability_rationale: str | None = None
+    implementation_narrative: str | None = None
+    verification_method: str | None = None
+    verification_description: str | None = None
+    test_cadence_days: int | None = None
+
+
+@app.get("/api/compliance/controls")
+def compliance_controls(principal: Principal = Depends(require(SCOPE_READ, "compliance_controls")),
+                        tenant: str | None = None):
+    store = _store_for(principal, tenant)
+    return service.list_control_workspace(store, tenant or principal.tenant_id,
+                                          registry=_registry(), now=service.now_iso())
+
+
+@app.get("/api/compliance/controls/{control_id}")
+def compliance_control_detail(control_id: str,
+                              principal: Principal = Depends(require(SCOPE_READ, "compliance_control")),
+                              tenant: str | None = None):
+    store = _store_for(principal, tenant)
+    return _handle(service.get_control_workspace, store, tenant or principal.tenant_id,
+                   control_id, registry=_registry(), now=service.now_iso())
+
+
+@app.put("/api/compliance/controls/{control_id}")
+def update_compliance_control(control_id: str, body: ControlProfileBody,
+                              principal: Principal = Depends(require(SCOPE_INGEST, "update_control"))):
+    store = _store_for(principal, None)
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    try:
+        return service.update_control_profile(store, principal.tenant_id, control_id, patch,
+                                              actor=principal.key_id, updated_at=service.now_iso())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ── OSCAL + auditor workspace (Wave 5) ────────────────────────────────────────

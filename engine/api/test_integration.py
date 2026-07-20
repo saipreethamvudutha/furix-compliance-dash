@@ -307,6 +307,35 @@ def test_posture_run_tenant_isolation():
     assert c.get("/api/posture-runs", headers=_H["globex"]).json() == []
 
 
+# ── compliance workspace (Wave-I / Epic 4) ────────────────────────────────────
+def test_compliance_workspace_list_edit_and_detail():
+    c, _ = _make_client()
+    # auditor can read the workspace
+    rows = c.get("/api/compliance/controls", headers=_H["auditor"]).json()
+    assert len(rows) >= 18 and "evidence_freshness" in rows[0]
+
+    # analyst edits a control's governance profile
+    patch = {"owner": "grc@acme", "applicability": "applicable",
+             "implementation_narrative": "MFA enforced org-wide", "test_cadence_days": 30}
+    up = c.put("/api/compliance/controls/Control 6", json=patch, headers=_H["analyst"])
+    assert up.status_code == 200 and up.json()["owner"] == "grc@acme"
+
+    # detail joins the profile + verdict + framework mappings + lineage
+    d = c.get("/api/compliance/controls/Control 6", headers=_H["auditor"]).json()
+    assert d["profile"]["owner"] == "grc@acme"
+    assert d["framework_mappings"]["nist_csf"]
+    assert "linked_findings" in d and "evidence_lineage" in d
+
+
+def test_compliance_profile_validation_and_unknown_control():
+    c, _ = _make_client()
+    bad = c.put("/api/compliance/controls/Control 1", json={"applicability": "maybe"},
+                headers=_H["admin"])
+    assert bad.status_code == 400 and "applicability" in bad.json()["detail"]
+    nf = c.get("/api/compliance/controls/Control 999", headers=_H["auditor"])
+    assert nf.status_code == 404
+
+
 # ── malformed input handling ──────────────────────────────────────────────────
 def test_malformed_requests_are_rejected_cleanly():
     c, _ = _make_client()

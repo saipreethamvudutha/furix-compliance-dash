@@ -172,6 +172,143 @@ def run_posture(store: ReportStore, *, tenant: str, snapshot: Mapping[str, Any],
     return PostureRunStore(store.root).save(run)
 
 
+# ── compliance workspace (Wave-I / Epic 4) ────────────────────────────────────
+def _latest_report(store: ReportStore) -> dict[str, Any] | None:
+    try:
+        idx = store.latest(1)
+        return store.load(idx[0].report_id) if idx else None
+    except (FileNotFoundError, IndexError, ValueError):
+        return None
+
+
+def _freshness(last_assessed: str | None, cadence_days: int, now: str) -> str:
+    if not last_assessed:
+        return "unknown"
+    try:
+        delta = datetime.fromisoformat(now) - datetime.fromisoformat(last_assessed)
+        return "stale" if delta.days > cadence_days else "fresh"
+    except ValueError:
+        return "unknown"
+
+
+def _framework_maps(registry: FrameworkRegistry, cid: str) -> dict[str, list[str]]:
+    return {
+        "nist_csf": list(registry.cis_to_nist.get(cid, ()) or ()),
+        "pci_dss": list(registry.cis_to_pci.get(cid, ()) or ()),
+        "hipaa": list(registry.cis_to_hipaa.get(cid, ()) or ()),
+    }
+
+
+def _control_universe(report: dict[str, Any] | None,
+                      registry: FrameworkRegistry) -> list[dict[str, Any]]:
+    if report:
+        return report["controls"]
+    # no assessment yet → list the CIS controls from the crosswalk, ordered
+    cids = sorted(registry.cis_to_nist.keys(),
+                  key=lambda c: int(c.split()[-1]) if c.split()[-1].isdigit() else 999)
+    return [{"control_id": c, "title": c, "status": "unknown"} for c in cids]
+
+
+def list_control_workspace(store: ReportStore, tenant: str, *,
+                           registry: FrameworkRegistry | None = None,
+                           now: str | None = None) -> list[dict[str, Any]]:
+    """Summary row per control: computed verdict + owner/applicability/freshness
+    + framework counts + open-finding count."""
+    from compliance_reporting.control_profile import ControlProfileStore  # noqa: PLC0415
+    registry = registry or FrameworkRegistry.from_live()
+    now = now or now_iso()
+    report = _latest_report(store)
+    last_assessed = report.get("generated_at") if report else None
+    cps = ControlProfileStore(store.root)
+    profiles = cps.all(tenant)
+    open_by_ctrl: dict[str, int] = {}
+    for f in _finding_store(store).list(open_only=True):
+        cid = f.get("control_id")
+        if cid:
+            open_by_ctrl[cid] = open_by_ctrl.get(cid, 0) + 1
+
+    rows = []
+    for c in _control_universe(report, registry):
+        cid = c["control_id"]
+        prof = profiles.get(cid) or cps.get(tenant, cid)
+        maps = _framework_maps(registry, cid)
+        rows.append({
+            "control_id": cid, "title": c.get("title", cid), "status": c.get("status", "unknown"),
+            "owner": prof["owner"], "applicability": prof["applicability"],
+            "verification_method": prof["verification_method"],
+            "test_cadence_days": prof["test_cadence_days"],
+            "evidence_freshness": _freshness(last_assessed, prof["test_cadence_days"], now),
+            "last_assessed": last_assessed,
+            "open_findings": open_by_ctrl.get(cid, 0),
+            "framework_counts": {k: len(v) for k, v in maps.items()},
+        })
+    return rows
+
+
+def get_control_workspace(store: ReportStore, tenant: str, control_id: str, *,
+                          registry: FrameworkRegistry | None = None,
+                          now: str | None = None) -> dict[str, Any]:
+    """Full workspace view for one control: verdict + governance profile + framework
+    mappings + linked findings + exceptions + complete evidence lineage."""
+    from compliance_reporting.control_profile import ControlProfileStore  # noqa: PLC0415
+    from compliance_reporting.posture_run import PostureRunStore  # noqa: PLC0415
+    registry = registry or FrameworkRegistry.from_live()
+    now = now or now_iso()
+    report = _latest_report(store)
+    ctrl = next((c for c in (report["controls"] if report else []) if c["control_id"] == control_id), None)
+    if ctrl is None and control_id not in registry.cis_to_nist:
+        raise FileNotFoundError(f"unknown control {control_id}")
+    ctrl = ctrl or {"control_id": control_id, "title": control_id, "status": "unknown"}
+
+    prof = ControlProfileStore(store.root).get(tenant, control_id)
+    last_assessed = report.get("generated_at") if report else None
+
+    findings = [f for f in _finding_store(store).list() if f.get("control_id") == control_id]
+    exceptions = [{"finding_id": f["finding_id"], **f["exception"]}
+                  for f in findings if f.get("exception")]
+
+    pr = PostureRunStore(store.root).latest(tenant)
+    lineage = {
+        "report_id": report.get("report_id") if report else None,
+        "report_integrity_sha256": (report.get("integrity", {}) or {}).get("content_sha256") if report else None,
+        "evidence_mode": ctrl.get("evidence_mode"),
+        "config_passing": ctrl.get("config_passing", []),
+        "config_failing": ctrl.get("config_failing", []),
+        "passing_tests": ctrl.get("passing_tests", []),
+        "failing_tests": ctrl.get("failing_tests", []),
+        "posture_run": None,
+    }
+    if pr:
+        lineage["posture_run"] = {
+            "run_id": pr["run_id"], "data_mode": pr.get("data_mode"),
+            "snapshot_sha256": pr["evidence"]["snapshot_sha256"],
+            "snapshot_uri": pr["evidence"]["raw_uri"], "report_id": pr["report_id"],
+        }
+
+    return {
+        "control_id": control_id, "title": ctrl.get("title", control_id),
+        "status": ctrl.get("status", "unknown"),
+        "worst_severity": ctrl.get("worst_severity"),
+        "profile": prof,
+        "evidence_freshness": _freshness(last_assessed, prof["test_cadence_days"], now),
+        "last_assessed": last_assessed,
+        "framework_mappings": _framework_maps(registry, control_id),
+        "linked_findings": findings,
+        "exceptions": exceptions,
+        "evidence_lineage": lineage,
+    }
+
+
+def update_control_profile(store: ReportStore, tenant: str, control_id: str,
+                           patch: dict[str, Any], *, actor: str, updated_at: str) -> dict[str, Any]:
+    from compliance_reporting.control_profile import ControlProfileStore, ControlProfileError  # noqa: PLC0415
+    try:
+        return ControlProfileStore(store.root).update(
+            tenant, control_id, patch, updated_by=actor, updated_at=updated_at)
+    except ControlProfileError as e:
+        raise ValueError(str(e))
+
+
 def list_posture_runs(store: ReportStore, tenant: str, *, limit: int = 50) -> list[dict[str, Any]]:
     from compliance_reporting.posture_run import PostureRunStore  # noqa: PLC0415
     return PostureRunStore(store.root).list(tenant, limit=limit)
