@@ -81,11 +81,18 @@ def attestation_sha256(att: Mapping[str, Any]) -> str:
 
 
 def evaluate_manual(attestations: list[Mapping[str, Any]] | None,
-                    as_of: str | None = None) -> list[dict[str, Any]]:
+                    as_of: str | None = None, *, keyring: Any = None,
+                    tenant: str = "default") -> list[dict[str, Any]]:
     """
     Evaluate the manual assertions against provided attestations. Each result is
-    PASS (a current, in-cadence attestation exists), STALE (attestation older
-    than cadence), or MANUAL_PENDING (no attestation) — never PASS without one.
+    PASS (a current, in-cadence, VERIFIED attestation exists), STALE
+    (attestation older than cadence), or MANUAL_PENDING (no attestation, or an
+    INVALID one) — never PASS without a signed, verified, non-future attestation.
+
+    When a `keyring` (AttestationKeyRing) is supplied, attestations are
+    signature-verified (Wave-N strict schema); an invalid attestation is treated
+    as absent (MANUAL_PENDING). Without a keyring the legacy lenient path runs
+    (dev/back-compat).
     """
     by_spec: dict[str, Mapping[str, Any]] = {}
     for a in (attestations or []):
@@ -98,8 +105,19 @@ def evaluate_manual(attestations: list[Mapping[str, Any]] | None,
     results: list[dict[str, Any]] = []
     for spec in MANUAL_ASSERTION_CATALOG.values():
         att = by_spec.get(spec.spec_id)
+        # strict verification when a keyring is provided (Wave-N)
+        verification_status = None
+        verification_reasons: list[str] = []
+        if att is not None and keyring is not None:
+            from .attestation import verify_attestation  # local import
+            verification_status, verification_reasons = verify_attestation(
+                att, keyring, tenant=tenant, as_of=as_of)
+            if verification_status != "verified":
+                att = None   # an invalid attestation cannot back a PASS
+
         if not att:
-            status, reason = MANUAL_PENDING, "no_attestation"
+            status = MANUAL_PENDING
+            reason = ("attestation_invalid" if verification_reasons else "no_attestation")
             evidence: list[dict[str, Any]] = []
         else:
             stale = _is_stale(att.get("attested_at"), as_of, spec.cadence_days)
@@ -110,12 +128,15 @@ def evaluate_manual(attestations: list[Mapping[str, Any]] | None,
                 "evidence_ref": att.get("evidence_ref"), "attested_at": att.get("attested_at"),
                 "attestation_sha256": attestation_sha256(att),
                 "raw_uri": f"furix-attestation://{attestation_sha256(att)}",
+                "verification_status": verification_status or "unverified",
             }]
         results.append({
             "spec_id": spec.spec_id, "title": spec.title, "control_ids": list(spec.control_edges),
             "severity": spec.severity, "mode": spec.mode, "predicate_kind": spec.predicate_kind,
             "evaluator_hash": spec.evaluator_hash(), "cadence_days": spec.cadence_days,
             "status": status, "status_reason": reason, "rationale": spec.rationale,
+            "verification": {"status": verification_status,
+                             "reasons": verification_reasons} if verification_status else None,
             "evidence": evidence,
         })
     results.sort(key=lambda r: r["spec_id"])

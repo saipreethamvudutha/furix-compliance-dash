@@ -32,3 +32,4 @@ numpy>=1.26
 # but its dependency is missing, so these are not silently optional in prod.
 cryptography>=42        # AES-256-GCM evidence encryption at rest (FUR-SEC-003)
 pyjwt[crypto]>=2.8      # RS256/JWKS OIDC verification (FUR-CMP-004)
+jsonschema>=4.20     # OSCAL 1.2.1 package schema validation (FUR-CMP-015)

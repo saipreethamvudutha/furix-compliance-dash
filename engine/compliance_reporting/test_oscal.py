@@ -91,13 +91,27 @@ def test_oscal_is_deterministic_and_json_serialisable():
     assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
-def test_schema_hook_is_honest_when_not_configured():
-    """The official-schema hook must report ran=False (not a false 'valid')
-    when no schema/jsonschema is available — never mistake unchecked for valid."""
+def test_bundled_schema_validates_real_documents():
+    """The bundled OSCAL 1.2.1 schema validates a real AR and POA&M."""
+    from .oscal import build_poam, validate_oscal_schema
+    ar = validate_oscal_schema(build_assessment_results(_report()))
+    if not ar["ran"]:
+        print("  (skipped: jsonschema not installed)")
+        return
+    assert ar["ok"] and ar["errors"] == [], ar
+    poam = validate_oscal_schema(build_poam(_report(), []))
+    assert poam["ok"], poam
+
+
+def test_schema_validation_catches_bad_document():
+    """A doc that violates the schema (bad oscal-version) fails schema validation."""
     from .oscal import validate_oscal_schema
-    res = validate_oscal_schema(build_assessment_results(_report()))
-    assert res["ran"] is False and "structural" in res["note"]
-    assert res["ok"] is True and res["errors"] == []      # structurally valid
+    ar = build_assessment_results(_report())
+    if not validate_oscal_schema(ar)["ran"]:
+        return  # jsonschema absent
+    ar["assessment-results"]["metadata"]["oscal-version"] = "9.9.9"
+    res = validate_oscal_schema(ar)
+    assert res["ok"] is False and res["errors"]
 
 
 def test_imports_are_not_dangling_internal_refs():

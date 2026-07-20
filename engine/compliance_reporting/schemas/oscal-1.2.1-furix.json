@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://furix.local/schemas/oscal-1.2.1-furix.json",
+  "title": "Furix OSCAL 1.2.1 (Assessment Results + POA&M subset)",
+  "description": "A strict JSON Schema for the OSCAL 1.2.1 documents Furix emits. Covers the fields Furix produces; drop in NIST's full metaschema via FURIX_OSCAL_SCHEMA for exhaustive validation.",
+  "type": "object",
+  "oneOf": [
+    { "required": ["assessment-results"] },
+    { "required": ["plan-of-action-and-milestones"] }
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "assessment-results": { "$ref": "#/$defs/assessment-results" },
+    "plan-of-action-and-milestones": { "$ref": "#/$defs/poam" }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "prop": {
+      "type": "object",
+      "required": ["name", "value"],
+      "properties": { "name": { "type": "string" }, "value": { "type": "string" } }
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["title", "version", "oscal-version"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "last-modified": { "type": "string" },
+        "version": { "type": "string", "minLength": 1 },
+        "oscal-version": { "const": "1.2.1" },
+        "props": { "type": "array", "items": { "$ref": "#/$defs/prop" } }
+      }
+    },
+    "import-ref": {
+      "type": "object",
+      "required": ["href"],
+      "properties": { "href": { "type": "string", "minLength": 1 }, "remarks": { "type": "string" } }
+    },
+    "assessment-results": {
+      "type": "object",
+      "required": ["uuid", "metadata", "import-ap", "results"],
+      "properties": {
+        "uuid": { "$ref": "#/$defs/uuid" },
+        "metadata": { "$ref": "#/$defs/metadata" },
+        "import-ap": { "$ref": "#/$defs/import-ref" },
+        "results": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["uuid", "title", "start"],
+            "properties": {
+              "uuid": { "$ref": "#/$defs/uuid" },
+              "title": { "type": "string" },
+              "description": { "type": "string" },
+              "start": { "type": "string" },
+              "observations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["uuid", "description", "methods"],
+                  "properties": {
+                    "uuid": { "$ref": "#/$defs/uuid" },
+                    "description": { "type": "string" },
+                    "methods": { "type": "array", "items": { "type": "string" } },
+                    "collected": { "type": "string" }
+                  }
+                }
+              },
+              "findings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["uuid", "title", "target"],
+                  "properties": {
+                    "uuid": { "$ref": "#/$defs/uuid" },
+                    "title": { "type": "string" },
+                    "target": {
+                      "type": "object",
+                      "required": ["type", "target-id", "status"],
+                      "properties": {
+                        "type": { "type": "string" },
+                        "target-id": { "type": "string" },
+                        "status": {
+                          "type": "object",
+                          "required": ["state"],
+                          "properties": { "state": { "type": "string" } }
+                        }
+                      }
+                    },
+                    "related-observations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["observation-uuid"],
+                        "properties": { "observation-uuid": { "$ref": "#/$defs/uuid" } }
+                      }
+                    },
+                    "props": { "type": "array", "items": { "$ref": "#/$defs/prop" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "poam": {
+      "type": "object",
+      "required": ["uuid", "metadata", "import-ssp", "system-id", "poam-items"],
+      "properties": {
+        "uuid": { "$ref": "#/$defs/uuid" },
+        "metadata": { "$ref": "#/$defs/metadata" },
+        "import-ssp": { "$ref": "#/$defs/import-ref" },
+        "system-id": {
+          "type": "object",
+          "required": ["id"],
+          "properties": {
+            "identifier-type": { "type": "string" },
+            "id": { "type": "string" }
+          }
+        },
+        "risks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["uuid", "title", "description", "status"],
+            "properties": {
+              "uuid": { "$ref": "#/$defs/uuid" },
+              "title": { "type": "string" },
+              "description": { "type": "string" },
+              "status": { "type": "string" },
+              "props": { "type": "array", "items": { "$ref": "#/$defs/prop" } }
+            }
+          }
+        },
+        "poam-items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["uuid", "title", "description"],
+            "properties": {
+              "uuid": { "$ref": "#/$defs/uuid" },
+              "title": { "type": "string" },
+              "description": { "type": "string" },
+              "props": { "type": "array", "items": { "$ref": "#/$defs/prop" } },
+              "related-risks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["risk-uuid"],
+                  "properties": { "risk-uuid": { "$ref": "#/$defs/uuid" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

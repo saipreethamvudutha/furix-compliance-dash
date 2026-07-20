@@ -79,6 +79,8 @@ def ingest_batch(
     analyzer: Analyzer | None = None,
     registry: FrameworkRegistry | None = None,
     deliver: bool = True,
+    evidence_store: Any = None,
+    evidence_required: bool = True,
     on_progress: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Any]:
     """
@@ -98,7 +100,7 @@ def ingest_batch(
     # Immutable evidence store lives alongside this tenant's report store
     # (FUR-CMP-007): every raw line is retained, content-addressed, write-once.
     from compliance_reporting.evidence import EvidenceStore  # noqa: PLC0415
-    ev_store = EvidenceStore(store.root)
+    ev_store = evidence_store or EvidenceStore(store.root)
 
     typed_lines = classify_lines(split_log_lines(text), log_type)
     total = len(typed_lines)
@@ -107,10 +109,16 @@ def ingest_batch(
         result = dict(analyzer(line, detected_type))
         observed_at = ((result.get("findings") or {}).get("timestamp")
                        if isinstance(result.get("findings"), dict) else None)
+        # Transactional evidence (Wave-N): a report must never present evidence
+        # that was not durably retained. If persistence fails and evidence is
+        # required, ABORT the ingest — no report with unbacked evidence.
         try:
-            ev_store.put(line, source=detected_type, tenant=tenant, observed_at=observed_at)
-        except OSError:
-            pass  # evidence retention failure must not silently corrupt the verdict path
+            obj = ev_store.put(line, source=detected_type, tenant=tenant, observed_at=observed_at)
+            if evidence_required and not ev_store.verify_object(obj.sha256):
+                raise IngestError(f"evidence for log #{i} failed persistence verification")
+        except (OSError, IngestError) as e:
+            if evidence_required:
+                raise IngestError(f"evidence could not be persisted for log #{i}: {e}") from e
         results.append({"log_type": detected_type, "result": result})
         if on_progress:
             on_progress(i + 1, total, "analyzing")
@@ -209,11 +217,15 @@ def ingest_config(
     ev_store = EvidenceStore(store.root)
     snap = parse_snapshot(snapshot)
     for r in snap.resources:
+        # transactional: a config assertion must not PASS on a resource whose
+        # raw evidence could not be retained (Wave-N).
         try:
-            ev_store.put(canonical_resource(r), source=f"config:{r.resource_type}",
-                         tenant=tenant, observed_at=r.observed_at)
-        except OSError:
-            pass
+            obj = ev_store.put(canonical_resource(r), source=f"config:{r.resource_type}",
+                               tenant=tenant, observed_at=r.observed_at)
+            if not ev_store.verify_object(obj.sha256):
+                raise IngestError(f"config resource {r.resource_id} failed persistence verification")
+        except (OSError, IngestError) as e:
+            raise IngestError(f"config evidence could not be persisted ({r.resource_id}): {e}") from e
 
     report = build_report(batch or [], registry=registry, config_snapshot=snap)
     verification = verify_report(report, batch or [])
@@ -355,13 +367,13 @@ def get_trend(store: ReportStore) -> list[dict[str, Any]]:
 # ── OSCAL + auditor export (Wave 5) ───────────────────────────────────────────
 def get_oscal(store: ReportStore, report_id: str = "latest", *, kind: str = "assessment-results",
               as_of: str | None = None) -> dict[str, Any]:
-    from compliance_reporting.oscal import build_assessment_results, build_poam, validate_oscal
+    from compliance_reporting.oscal import build_assessment_results, build_poam, validate_oscal_schema
     report = store.load(_resolve(store, report_id))
     if kind == "poam":
         doc = build_poam(report, list_findings(store, as_of=as_of, open_only=True))
     else:
         doc = build_assessment_results(report)
-    return {"oscal": doc, "validation": {"ok": not (errs := validate_oscal(doc)), "errors": errs}}
+    return {"oscal": doc, "validation": validate_oscal_schema(doc)}
 
 
 def get_audit_package(store: ReportStore, report_id: str = "latest",
@@ -372,11 +384,16 @@ def get_audit_package(store: ReportStore, report_id: str = "latest",
     findings/exception workpaper — everything needed to inspect the assessment
     without trusting the live dashboard.
     """
-    from compliance_reporting.oscal import build_assessment_results, build_poam, validate_oscal
+    from compliance_reporting.oscal import build_assessment_results, build_poam, validate_oscal_schema
     report = store.load(_resolve(store, report_id))
     findings = list_findings(store, as_of=as_of, open_only=True)
     ar = build_assessment_results(report)
     poam = build_poam(report, findings)
+    ar_val, poam_val = validate_oscal_schema(ar), validate_oscal_schema(poam)
+    # An auditor package must not be issued unless the OSCAL schema-validates.
+    if not (ar_val["ok"] and poam_val["ok"]):
+        raise IngestError(f"OSCAL package failed schema validation: "
+                          f"{ar_val['errors'] + poam_val['errors']}")
     return {
         "report_id": report["report_id"],
         "generated_at": report.get("generated_at"),
@@ -386,7 +403,8 @@ def get_audit_package(store: ReportStore, report_id: str = "latest",
         "oscal": {
             "assessment_results": ar,
             "poam": poam,
-            "validation_ok": not (validate_oscal(ar) or validate_oscal(poam)),
+            "validation_ok": ar_val["ok"] and poam_val["ok"],
+            "schema": ar_val.get("schema"),
         },
         "findings": findings,
     }

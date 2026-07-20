@@ -210,30 +210,40 @@ def validate_oscal(doc: Mapping[str, Any]) -> list[str]:
     return errors
 
 
+import os as _os
+
+# Bundled Furix OSCAL 1.2.1 schema (AR + POA&M subset). FURIX_OSCAL_SCHEMA can
+# point at NIST's full metaschema for exhaustive validation.
+_BUNDLED_SCHEMA = _os.path.join(_os.path.dirname(__file__), "schemas", "oscal-1.2.1-furix.json")
+
+
 def validate_oscal_schema(doc: Mapping[str, Any], schema_path: str | None = None) -> dict[str, Any]:
     """
-    Validate against the OFFICIAL OSCAL 1.2.1 JSON schema when both `jsonschema`
-    and a schema file are available (the audit's ask). Returns
-    {ran, ok, errors, note}. When the schema/lib is unavailable it does NOT
-    claim success — it reports ran=False so callers never mistake "not checked"
-    for "valid". Structural validation (validate_oscal) always runs regardless.
+    JSON-Schema validate the document (the audit's ask). By default this uses
+    the **bundled** Furix OSCAL 1.2.1 schema; set FURIX_OSCAL_SCHEMA to NIST's
+    full metaschema to validate exhaustively. Structural validation
+    (validate_oscal) always runs too. Returns {ran, ok, errors, schema, note}.
+    Only reports ok=True when BOTH structural and schema validation pass; when
+    `jsonschema` is unavailable it reports ran=False (never a false "valid").
     """
-    import os
+    import json as _json
     structural = validate_oscal(doc)
-    schema_path = schema_path or os.environ.get("FURIX_OSCAL_SCHEMA")
-    if not schema_path or not os.path.exists(schema_path):
+    schema_path = schema_path or _os.environ.get("FURIX_OSCAL_SCHEMA") or _BUNDLED_SCHEMA
+    if not _os.path.exists(schema_path):
         return {"ran": False, "ok": not structural, "errors": structural,
-                "note": "official OSCAL schema not configured (set FURIX_OSCAL_SCHEMA); "
-                        "structural validation only"}
+                "schema": None, "note": "no OSCAL schema file found; structural validation only"}
     try:
-        import json as _json
         import jsonschema  # optional dep
-        schema = _json.loads(open(schema_path, encoding="utf-8").read())
-        errs = [str(e.message) for e in
-                jsonschema.Draft202012Validator(schema).iter_errors(doc)]
-        return {"ran": True, "ok": not errs and not structural,
-                "errors": structural + errs, "note": f"validated against {schema_path}"}
     except ImportError:
         return {"ran": False, "ok": not structural, "errors": structural,
-                "note": "jsonschema not installed (pip install jsonschema)"}
+                "schema": schema_path,
+                "note": "jsonschema not installed (pip install jsonschema); structural only"}
+    with open(schema_path, encoding="utf-8") as fh:
+        schema = _json.load(fh)
+    errs = [f"{'/'.join(str(p) for p in e.path)}: {e.message}"
+            for e in jsonschema.Draft202012Validator(schema).iter_errors(doc)]
+    kind = "NIST OSCAL" if schema_path != _BUNDLED_SCHEMA else "Furix OSCAL 1.2.1"
+    return {"ran": True, "ok": not errs and not structural,
+            "errors": structural + errs, "schema": schema_path,
+            "note": f"validated against {kind} schema"}
 

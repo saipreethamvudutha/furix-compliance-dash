@@ -183,6 +183,43 @@ def test_findings_lifecycle_end_to_end():
     assert c5["finding"]["exception"]["approver"] == "ciso"
 
 
+def test_evidence_persistence_failure_aborts_ingest():
+    """Wave-N transactional evidence: if raw evidence can't be persisted, the
+    ingest aborts — no report is produced with unbacked evidence."""
+    class FailingEvidenceStore:
+        objects_dir = None
+        def put(self, *a, **k):
+            raise OSError("disk full")
+        def verify_object(self, sha):
+            return False
+    store = _store()
+    try:
+        service.ingest_batch(store, _ATTACK, analyzer=_stub_analyzer, registry=_REG,
+                             deliver=False, evidence_store=FailingEvidenceStore())
+        raise AssertionError("ingest did not abort on evidence persistence failure")
+    except service.IngestError:
+        pass
+    assert len(store.entries()) == 0   # no report saved
+
+
+def test_evidence_verification_failure_aborts_ingest():
+    """Even if put() 'succeeds' but the object doesn't verify, abort."""
+    class SilentlyDroppingStore:
+        def put(self, raw, **k):
+            class _O:  # returns an object but never actually stored it
+                sha256 = "0" * 64
+            return _O()
+        def verify_object(self, sha):
+            return False
+    store = _store()
+    try:
+        service.ingest_batch(store, "CreateUser evil", analyzer=_stub_analyzer, registry=_REG,
+                             deliver=False, evidence_store=SilentlyDroppingStore())
+        raise AssertionError("ingest did not abort on verification failure")
+    except service.IngestError:
+        pass
+
+
 if __name__ == "__main__":
     import sys, traceback
     tests = [(n, f) for n, f in sorted(globals().items())

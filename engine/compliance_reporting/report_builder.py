@@ -422,6 +422,8 @@ def build_report(
     config_snapshot: Any = None,
     config_as_of: str | None = None,
     attestations: Any = None,
+    attestation_keyring: Any = None,
+    tenant: str = "default",
 ) -> dict[str, Any]:
     """
     Build the canonical compliance report for one batch of pipeline results.
@@ -464,7 +466,8 @@ def build_report(
     # people/process controls (9,14,15,17,18). PENDING until attested.
     if attestations is not None:
         from .manual_evidence import evaluate_manual as _eval_manual  # local import
-        config_results = config_results + _eval_manual(attestations, as_of=config_as_of)
+        config_results = config_results + _eval_manual(
+            attestations, as_of=config_as_of, keyring=attestation_keyring, tenant=tenant)
 
     evidence = _evidence_items(entries)
     tests = _build_tests(evidence, logs_evaluated=len(successes))
