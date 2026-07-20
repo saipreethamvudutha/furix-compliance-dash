@@ -383,6 +383,47 @@ def test_audit_period_tenant_isolation():
     assert c.get("/api/audit-periods", headers=_H["globex"]).json() == []
 
 
+# ── enterprise runtime (Wave-I / Epic 6) ──────────────────────────────────────
+def test_admin_audit_log_records_and_verifies():
+    c, _ = _make_client()
+    # a couple of admin actions
+    c.post("/api/connectors", json={"connector_id": "ac1", "kind": "demo-aws"}, headers=_H["admin"])
+    c.post("/api/connectors/ac1/posture-run", headers=_H["admin"])
+
+    # analyst cannot read the admin audit log
+    assert c.get("/api/admin/audit-log", headers=_H["analyst"]).status_code == 403
+    log = c.get("/api/admin/audit-log", headers=_H["admin"]).json()
+    actions = {e["action"] for e in log}
+    assert "connector.register" in actions and "connector.posture_run" in actions
+    # every entry is hash-chained; the chain verifies
+    v = c.get("/api/admin/audit-log/verify", headers=_H["admin"]).json()
+    assert v["ok"] is True and v["checked"] >= 2
+
+
+def test_queue_stats_admin_only():
+    c, _ = _make_client()
+    assert c.get("/api/admin/queue/stats", headers=_H["analyst"]).status_code == 403
+    assert c.get("/api/admin/queue/stats", headers=_H["admin"]).status_code == 200
+
+
+def test_scim_provision_and_deprovision():
+    c, _ = _make_client()
+    # non-admin cannot provision
+    assert c.post("/scim/v2/Users", json={"userName": "x@acme"}, headers=_H["analyst"]).status_code == 403
+    created = c.post("/scim/v2/Users",
+                     json={"userName": "newhire@acme", "emails": [{"value": "newhire@acme"}]},
+                     headers=_H["admin"])
+    assert created.status_code == 201
+    uid = created.json()["id"]
+    assert c.get("/scim/v2/Users/" + uid, headers=_H["admin"]).json()["active"] is True
+    # list with the SCIM userName filter
+    listed = c.get('/scim/v2/Users?filter=userName eq "newhire@acme"', headers=_H["admin"]).json()
+    assert listed["totalResults"] == 1
+    # deprovision (SCIM DELETE → deactivate)
+    assert c.delete("/scim/v2/Users/" + uid, headers=_H["admin"]).status_code == 204
+    assert c.get("/scim/v2/Users/" + uid, headers=_H["admin"]).json()["active"] is False
+
+
 # ── malformed input handling ──────────────────────────────────────────────────
 def test_malformed_requests_are_rejected_cleanly():
     c, _ = _make_client()

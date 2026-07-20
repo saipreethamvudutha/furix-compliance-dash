@@ -34,6 +34,7 @@ MODULES = [
     "compliance_reporting.test_manual",
     "compliance_reporting.test_attestation",
     "compliance_reporting.test_attestation_store",
+    "compliance_reporting.test_enterprise",
     "compliance_reporting.test_collectors",
     "compliance_reporting.test_aws_boto3",
     "compliance_reporting.test_connector_registry",

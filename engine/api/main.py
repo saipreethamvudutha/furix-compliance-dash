@@ -29,8 +29,11 @@ from pydantic import BaseModel
 from compliance_reporting.render_html import render_html_report
 from compliance_reporting.settings import Settings
 
+from compliance_reporting.admin_audit import AdminAuditLog
 from compliance_reporting.attestation_store import AttestationError, AttestationStore
 from compliance_reporting.connector_registry import ConnectorRegistry, ConnectorScheduler
+from compliance_reporting.scim import ScimError, ScimUserStore
+from compliance_reporting.work_queue import WorkQueue
 
 from . import service
 from .attest_keys import attestation_keyring_for
@@ -91,6 +94,26 @@ def _connector_registry_for(tenant: str) -> ConnectorRegistry:
 # Connector manifests are mandatory-signed; the secret is server-only config
 # (Docker-secret-friendly via FURIX_CONNECTOR_SIGNING_SECRET_FILE).
 _CONNECTOR_SIGNING_SECRET = read_secret("FURIX_CONNECTOR_SIGNING_SECRET", "")
+
+
+# ── enterprise runtime (Wave-I / Epic 6) ──────────────────────────────────────
+def _admin_audit_for(tenant: str) -> AdminAuditLog:
+    return AdminAuditLog(_stores.for_tenant(tenant).root)
+
+
+def _record_admin(principal: Principal, action: str, *, target: str = "",
+                  outcome: str = "ok", details: dict | None = None) -> None:
+    """Append a tamper-evident entry to the administrative audit log."""
+    try:
+        _admin_audit_for(principal.tenant_id).append(
+            tenant=principal.tenant_id, actor=principal.key_id, action=action,
+            at=service.now_iso(), target=target, outcome=outcome, details=details or {})
+    except Exception:  # noqa: BLE001 - auditing must never break the request path
+        pass
+
+
+def _work_queue_for(tenant: str) -> WorkQueue:
+    return WorkQueue(_stores.for_tenant(tenant).root)
 
 
 # Framework crosswalk registry — built once (live DB, else bundled snapshot).
@@ -477,9 +500,12 @@ def approve_attestation(att_id: str, body: AttestationDecisionBody,
         raise HTTPException(status_code=403, detail="attestation approval requires admin authority")
     tn = principal.tenant_id
     try:
-        return _attest_store_for(tn).approve(
+        result = _attest_store_for(tn).approve(
             att_id, tenant=tn, approved_by=principal.key_id, decided_at=body.decided_at,
             reason=body.reason)
+        _record_admin(principal, "attestation.approve", target=att_id,
+                      details={"status": result["status"]})
+        return result
     except AttestationError as e:
         # unknown id → 404; a rule violation (self-approval, duplicate, bad state) → 400
         raise HTTPException(status_code=404 if "unknown" in str(e) else 400, detail=str(e))
@@ -537,6 +563,8 @@ def register_connector(body: ConnectorBody,
     reg = _connector_registry_for(tn)
     reg.register(tenant=tn, connector_id=body.connector_id, kind=body.kind,
                  schedule_seconds=body.schedule_seconds, now=now, config=body.config)
+    _record_admin(principal, "connector.register", target=body.connector_id,
+                  details={"kind": body.kind})
     # return the health-enriched record
     return next(c for c in reg.list(tn, now=now) if c["connector_id"] == body.connector_id)
 
@@ -590,9 +618,16 @@ def connector_posture_run(connector_id: str,
                                   occurred_at=service.now_iso(), actor=principal.key_id,
                                   data_mode=data_mode)
         reg.record_run(tn, connector_id, now=now, manifest=collected["manifest"], error=None)
+        _record_admin(principal, "connector.posture_run", target=connector_id,
+                      details={"report_id": run["report_id"], "run_id": run["run_id"],
+                               "data_mode": data_mode})
         return run
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001 - record the failure on the connector, surface 422
         reg.record_run(tn, connector_id, now=now, manifest=None, error=str(e))
+        _record_admin(principal, "connector.posture_run", target=connector_id,
+                      outcome="error", details={"error": str(e)[:200]})
         raise HTTPException(status_code=422, detail=f"posture run failed: {e}")
 
 
@@ -691,8 +726,11 @@ def signoff_audit_period(period_id: str,
     # Sign-off (freeze) is a reviewer act — the export scope (auditor/admin).
     store = _store_for(principal, None)
     try:
-        return service.sign_off_audit_period(store, principal.tenant_id, period_id,
-                                             reviewer=principal.key_id, at=service.now_iso())
+        result = service.sign_off_audit_period(store, principal.tenant_id, period_id,
+                                               reviewer=principal.key_id, at=service.now_iso())
+        _record_admin(principal, "audit_period.signoff", target=period_id,
+                      details={"snapshot_sha256": result["signoffs"][-1]["snapshot_sha256"]})
+        return result
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
@@ -706,9 +744,12 @@ def reopen_audit_period(period_id: str, body: ReopenBody,
         raise HTTPException(status_code=403, detail="reopening a frozen period requires admin authority")
     store = _store_for(principal, None)
     try:
-        return service.reopen_audit_period(store, principal.tenant_id, period_id,
-                                           actor=principal.key_id, at=service.now_iso(),
-                                           reason=body.reason)
+        result = service.reopen_audit_period(store, principal.tenant_id, period_id,
+                                             actor=principal.key_id, at=service.now_iso(),
+                                             reason=body.reason)
+        _record_admin(principal, "audit_period.reopen", target=period_id,
+                      details={"reason": body.reason})
+        return result
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
@@ -764,10 +805,103 @@ def update_compliance_control(control_id: str, body: ControlProfileBody,
     store = _store_for(principal, None)
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     try:
-        return service.update_control_profile(store, principal.tenant_id, control_id, patch,
-                                              actor=principal.key_id, updated_at=service.now_iso())
+        result = service.update_control_profile(store, principal.tenant_id, control_id, patch,
+                                                actor=principal.key_id, updated_at=service.now_iso())
+        _record_admin(principal, "control.profile_update", target=control_id,
+                      details={"fields": sorted(patch.keys())})
+        return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── enterprise runtime: admin audit log + queue + SCIM (Wave-I / Epic 6) ──────
+@app.get("/api/admin/audit-log")
+def admin_audit_log(principal: Principal = Depends(require(SCOPE_READ, "admin_audit_log")),
+                    tenant: str | None = None, limit: int = 200):
+    if not principal.has(SCOPE_ADMIN):
+        raise HTTPException(status_code=403, detail="the administrative audit log requires admin authority")
+    tn = tenant or principal.tenant_id
+    _store_for(principal, tenant)
+    return _admin_audit_for(tn).list(tn, limit=limit)
+
+
+@app.get("/api/admin/audit-log/verify")
+def admin_audit_verify(principal: Principal = Depends(require(SCOPE_READ, "admin_audit_verify")),
+                       tenant: str | None = None):
+    if not principal.has(SCOPE_ADMIN):
+        raise HTTPException(status_code=403, detail="audit-log verification requires admin authority")
+    tn = tenant or principal.tenant_id
+    _store_for(principal, tenant)
+    return _admin_audit_for(tn).verify(tn)
+
+
+@app.get("/api/admin/queue/stats")
+def admin_queue_stats(principal: Principal = Depends(require(SCOPE_READ, "queue_stats"))):
+    if not principal.has(SCOPE_ADMIN):
+        raise HTTPException(status_code=403, detail="queue stats require admin authority")
+    return _work_queue_for(principal.tenant_id).stats(principal.tenant_id)
+
+
+# ── SCIM 2.0 user provisioning ────────────────────────────────────────────────
+def _scim_store(principal: Principal) -> ScimUserStore:
+    return ScimUserStore(_stores.for_tenant(principal.tenant_id).root, principal.tenant_id)
+
+
+def _scim_error(e: ScimError):
+    return JSONResponse(
+        status_code=e.status,
+        content={"schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
+                 "detail": str(e), "status": str(e.status)})
+
+
+@app.post("/scim/v2/Users", status_code=201)
+def scim_create_user(body: dict,
+                     principal: Principal = Depends(require(SCOPE_ADMIN, "scim_create"))):
+    try:
+        return _scim_store(principal).create(body, now=service.now_iso())
+    except ScimError as e:
+        return _scim_error(e)
+
+
+@app.get("/scim/v2/Users")
+def scim_list_users(principal: Principal = Depends(require(SCOPE_ADMIN, "scim_list")),
+                    filter: str | None = None):
+    user_name = None
+    if filter and "userName eq " in filter:
+        user_name = filter.split("userName eq ", 1)[1].strip().strip('"')
+    return _scim_store(principal).list(user_name=user_name)
+
+
+@app.get("/scim/v2/Users/{user_id}")
+def scim_get_user(user_id: str,
+                  principal: Principal = Depends(require(SCOPE_ADMIN, "scim_get"))):
+    try:
+        return _scim_store(principal).get(user_id)
+    except ScimError as e:
+        return _scim_error(e)
+
+
+@app.put("/scim/v2/Users/{user_id}")
+def scim_replace_user(user_id: str, body: dict,
+                      principal: Principal = Depends(require(SCOPE_ADMIN, "scim_replace"))):
+    try:
+        result = _scim_store(principal).replace(user_id, body, now=service.now_iso())
+        _record_admin(principal, "scim.replace", target=user_id)
+        return result
+    except ScimError as e:
+        return _scim_error(e)
+
+
+@app.delete("/scim/v2/Users/{user_id}")
+def scim_deactivate_user(user_id: str,
+                         principal: Principal = Depends(require(SCOPE_ADMIN, "scim_delete"))):
+    # SCIM deprovisioning: deactivate (soft) so the identity + audit trail persist.
+    try:
+        _scim_store(principal).set_active(user_id, False, now=service.now_iso())
+        _record_admin(principal, "scim.deprovision", target=user_id)
+        return Response(status_code=204)
+    except ScimError as e:
+        return _scim_error(e)
 
 
 # ── OSCAL + auditor workspace (Wave 5) ────────────────────────────────────────
