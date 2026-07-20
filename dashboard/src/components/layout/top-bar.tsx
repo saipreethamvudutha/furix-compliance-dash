@@ -161,6 +161,8 @@ export function TopBar() {
     .toUpperCase();
 
   const signOut = () => {
+    // clear the server session (Wave-N #1), then the UI hint
+    void fetch("/bff/auth/logout", { method: "POST" }).catch(() => {});
     try {
       localStorage.removeItem("byoc-auth");
       localStorage.removeItem("byoc-user-email");

@@ -13,6 +13,8 @@
 // not change when that lands.
 
 import { NextRequest, NextResponse } from "next/server";
+import { openSession, readCsrfCookie, readSessionCookie } from "@/lib/bff/session";
+import { bffAllows, mintUserToken } from "@/lib/bff/token";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,13 +24,42 @@ export const dynamic = "force-dynamic";
 const API_URL = (process.env.FURIX_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 const API_KEY = process.env.FURIX_API_KEY ?? "furix-dev-key";
 
+function unauth(detail: string, status = 401): NextResponse {
+  return NextResponse.json({ detail }, { status });
+}
+
 async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
-  const target = `${API_URL}/${path.join("/")}${req.nextUrl.search}`;
+  const apiPath = path.join("/");
+  const isHealth = apiPath.replace(/^api\//, "").startsWith("health");
+
+  // ── server-side session gate (Wave-N #1) ──────────────────────────────────
+  const cookieHeader = req.headers.get("cookie");
+  const session = openSession(readSessionCookie(cookieHeader));
+  if (!isHealth) {
+    if (!session) return unauth("not authenticated — sign in");
+    // server-side RBAC (defense in depth; the API enforces fine-grained scopes)
+    if (!bffAllows(session.role, req.method, apiPath)) {
+      return unauth(`role '${session.role}' may not ${req.method} ${apiPath}`, 403);
+    }
+    // CSRF double-submit on state-changing requests
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      const header = req.headers.get("x-csrf-token");
+      const cookie = readCsrfCookie(cookieHeader);
+      if (!header || !cookie || header !== cookie || header !== session.csrf) {
+        return unauth("CSRF token missing or invalid", 403);
+      }
+    }
+  }
+
+  // Per-user token when minting is configured, else the static server key.
+  const bearer = (session && mintUserToken(session)) || API_KEY;
+  const target = `${API_URL}/${apiPath}${req.nextUrl.search}`;
   const init: RequestInit = {
     method: req.method,
     headers: {
-      authorization: `Bearer ${API_KEY}`,
-      // forward only content-type; the key is injected server-side
+      authorization: `Bearer ${bearer}`,
+      // forward the authenticated identity for the API's audit log
+      ...(session ? { "x-furix-actor": session.sub, "x-furix-role": session.role } : {}),
       ...(req.headers.get("content-type")
         ? { "content-type": req.headers.get("content-type") as string }
         : {}),

@@ -27,28 +27,42 @@ export default function LoginPage() {
     };
   }, []);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
-    const match = DEMO_USERS.find(
-      (u) => u.email === email.trim().toLowerCase() && u.password === password
-    );
-    setTimeout(() => {
-      if (!match) {
+    // Real server-side login (Wave-N #1): the credential is validated on the
+    // server, which sets an encrypted HTTP-only session cookie. No secret or
+    // identity is written to localStorage.
+    try {
+      const res = await fetch("/bff/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+      });
+      if (!res.ok) {
         setError("Invalid credentials.");
         setLoading(false);
         return;
       }
+      const data = (await res.json()) as { user?: { email: string; role: string } };
+      // keep a NON-secret UI hint for the client RBAC/theme (not an auth token)
       try {
+        const roleId =
+          DEMO_USERS.find((u) => u.email === data.user?.email)?.roleId ?? "admin";
+        // UI-only shell hint; the real auth is the encrypted server session
+        // cookie (this flag grants no API access on its own).
         localStorage.setItem("byoc-auth", "1");
-        localStorage.setItem("byoc-user-email", match.email);
-        localStorage.setItem("byoc-user-role", match.role);
-        localStorage.setItem("byoc-rbac-role", match.roleId);
+        localStorage.setItem("byoc-user-email", data.user?.email ?? email);
+        localStorage.setItem("byoc-user-role", data.user?.role ?? "");
+        localStorage.setItem("byoc-rbac-role", roleId);
         localStorage.setItem("byoc-org", "Coventra Health Insurance");
       } catch {}
       router.replace("/");
-    }, 350);
+    } catch {
+      setError("Sign-in failed — is the server reachable?");
+      setLoading(false);
+    }
   };
 
   return (

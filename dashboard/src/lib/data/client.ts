@@ -18,15 +18,28 @@ export class ApiError extends Error {
   }
 }
 
+function readCsrf(): string {
+  if (typeof document === "undefined") return "";
+  for (const part of document.cookie.split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === "furix_csrf") return v.join("=");
+  }
+  return "";
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const isWrite = init?.method && init.method !== "GET" && init.method !== "HEAD";
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, {
       ...init,
       headers: {
         "content-type": "application/json",
+        // CSRF double-submit: echo the readable CSRF cookie on state changes
+        ...(isWrite ? { "x-csrf-token": readCsrf() } : {}),
         ...(init?.headers ?? {}),
       },
+      credentials: "same-origin", // send the session cookie
       cache: "no-store",
     });
   } catch (e) {
