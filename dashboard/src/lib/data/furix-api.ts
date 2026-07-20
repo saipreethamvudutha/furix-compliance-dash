@@ -160,3 +160,28 @@ export function getTrend(): Promise<ReportIndexEntry[]> {
 export function getDiff(oldId: string, newId: string): Promise<{ diff: unknown; alerts: Alert[] }> {
   return apiGet(`/api/diff?old=${encodeURIComponent(oldId)}&new=${encodeURIComponent(newId)}`);
 }
+
+// ── findings / remediation lifecycle (Wave 5) ────────────────────────────────
+export type Finding = {
+  finding_id: string;
+  state: string;
+  control_id?: string;
+  framework_id?: string;
+  severity?: string;
+  owner?: string;
+  due_date?: string;
+  expired?: boolean;
+  updated_at?: string;
+  last_actor?: string;
+  last_reason?: string;
+  exception?: {
+    approver?: string;
+    rationale?: string;
+    compensating_control?: string;
+    expiry?: string;
+  };
+};
+
+export function getFindings(openOnly = true): Promise<Finding[]> {
+  return apiGet<Finding[]>(`/api/findings?open_only=${openOnly}`);
+}

@@ -4,6 +4,31 @@ End-to-end bring-up of the full stack on a fresh Ubuntu server with Docker.
 Everything runs in containers; one one-time bootstrap step loads the SCF
 crosswalk and (optionally) the RAG evidence embeddings.
 
+## ⚡ Upgrading an existing (pre-auth) deployment
+
+If the box is running a build from before the auth/BFF hardening, the upgrade
+adds mandatory security. On the server:
+
+```bash
+cd furix-compliance && git pull
+# 1. Update .env (deploy/.env) — the API now REQUIRES these:
+#      FURIX_API_KEYS   JSON list of real keys (openssl rand -hex 24)
+#      FURIX_API_KEY    the same key, for the dashboard's server-side BFF
+#    Internal test box shortcut: set FURIX_ENV=development to boot with the
+#    dev key (loud warnings). Production: FURIX_ENV=production +
+#    FURIX_TLS_TERMINATED=1 — the API REFUSES to boot with dev/CHANGE-ME keys.
+# 2. Rebuild both tiers (dashboard build changed: BFF, no client key):
+docker compose -f deploy/docker-compose.yml build api web
+docker compose -f deploy/docker-compose.yml up -d
+# 3. Verify:
+curl -fsS http://localhost:8088/api/health                       # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8088/api/summary  # 401 (no key)
+```
+
+Reports stored by the old version still load (schema 1.x fallback); new
+ingests produce schema 2.0 with the honest assurance states. The dashboard
+will look different by design: coverage-first tiles, no fake compliance %.
+
 ## 0. Prerequisites
 - Docker Engine + Compose v2 (`docker --version`, `docker compose version`).
 - **≥16 GB RAM** (SecureBERT loads into the api container; CPU is fine, GPU optional).

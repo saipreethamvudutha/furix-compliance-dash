@@ -70,9 +70,12 @@ def collect_issues() -> list[str]:
     issues: list[str] = []
     keys = _configured_keys()
 
-    # 1. no default dev key in production
+    # 1. no default/placeholder keys in production
     if any(str(k.get("key")) == DEV_KEY for k in keys):
         issues.append("default dev API key present in FURIX_API_KEYS — replace with real random keys")
+    if any("CHANGE-ME" in str(k.get("key", "")) for k in keys):
+        issues.append("placeholder CHANGE-ME key present in FURIX_API_KEYS — generate real keys "
+                      "(openssl rand -hex 24)")
     if not keys:
         issues.append("no FURIX_API_KEYS configured — every request would be denied")
 

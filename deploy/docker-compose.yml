@@ -59,9 +59,15 @@ services:
       FURIX_CORS_ORIGINS: ${FURIX_CORS_ORIGINS:-http://localhost}
       # Auth (FUR-CMP-004): every data endpoint requires a bearer key. Provide a
       # JSON list of {key,key_id,tenant,role}. Roles: admin|analyst|auditor|mssp.
-      # MUST be set in production; FURIX_ENV=production refuses to mint a dev key.
-      FURIX_ENV: ${FURIX_ENV:-production}
+      #
+      # FURIX_ENV defaults to "development" so an internal test box boots out of
+      # the box (with LOUD preflight warnings). Set FURIX_ENV=production in .env
+      # for a real deployment — production FAILS CLOSED unless real random keys,
+      # a durable job DB, and the TLS acknowledgement are configured.
+      FURIX_ENV: ${FURIX_ENV:-development}
       FURIX_API_KEYS: ${FURIX_API_KEYS:-[{"key":"furix-dev-key","key_id":"dev","tenant":"default","role":"admin"}]}
+      FURIX_JOB_DB: ${FURIX_JOB_DB:-/data/reports/jobs.db}
+      FURIX_TLS_TERMINATED: ${FURIX_TLS_TERMINATED:-}
       FURIX_RATE_LIMIT_PER_MIN: ${FURIX_RATE_LIMIT_PER_MIN:-240}
       FURIX_MAX_INGEST_CHARS: ${FURIX_MAX_INGEST_CHARS:-20971520}
     volumes:

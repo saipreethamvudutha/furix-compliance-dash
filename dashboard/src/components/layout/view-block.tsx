@@ -83,6 +83,12 @@ export function ViewBlockView({
   const stats = useCoventraStats();
   return (
     <>
+      {/* Honesty label (FUR-UX-001): these modules render illustrative sample
+          data, not verified posture. Only /compliance and /findings are live. */}
+      <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-slate-400/40 bg-slate-500/10 px-3 py-1 text-[11px] font-medium text-slate-600 dark:text-slate-300">
+        <span className="font-mono tracking-wide">DEMO</span>
+        <span className="opacity-70">· sample data — see Compliance &amp; Findings for live, verified posture</span>
+      </div>
       {block.intro && (
         <p className="mb-4 text-[13px]" style={{ color: "var(--panel-text-muted)" }}>
           {block.intro}
