@@ -19,6 +19,7 @@ MODULES = [
     "compliance_reporting.test_config",
     "compliance_reporting.test_manual",
     "compliance_reporting.test_attestation",
+    "compliance_reporting.test_collectors",
     "compliance_reporting.test_exceptions",
     "compliance_reporting.test_oscal",
     "compliance_reporting.adapters.test_adapter",
@@ -32,6 +33,7 @@ MODULES = [
     "api.test_auth",
     "api.test_durable",
     "api.test_preflight",
+    "api.test_integration",
 ]
 
 
