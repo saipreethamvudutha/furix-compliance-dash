@@ -13,7 +13,7 @@
 // not change when that lands.
 
 import { NextRequest, NextResponse } from "next/server";
-import { isProd, prodReadiness } from "@/lib/bff/env";
+import { isProd, prodReadiness, readSecret } from "@/lib/bff/env";
 import { openSession, readCsrfCookie, readSessionCookie } from "@/lib/bff/session";
 import { bffAllows, mintUserToken } from "@/lib/bff/token";
 
@@ -25,7 +25,7 @@ export const dynamic = "force-dynamic";
 // production per-user token minting is mandatory (see the bearer resolution
 // below) and this fallback is never used.
 const API_URL = (process.env.FURIX_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
-const DEV_API_KEY = process.env.FURIX_API_KEY ?? "furix-dev-key";
+const DEV_API_KEY = readSecret("FURIX_API_KEY") || "furix-dev-key";
 
 function unauth(detail: string, status = 401): NextResponse {
   return NextResponse.json({ detail }, { status });
@@ -33,7 +33,10 @@ function unauth(detail: string, status = 401): NextResponse {
 
 async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
   const apiPath = path.join("/");
-  const isHealth = apiPath.replace(/^api\//, "").startsWith("health");
+  // health + readiness probes are open (no session) — an orchestrator/LB must be
+  // able to probe them before any user is authenticated.
+  const probe = apiPath.replace(/^api\//, "");
+  const isHealth = probe.startsWith("health") || probe.startsWith("readyz");
 
   // ── fail-closed production readiness (Wave-F) ─────────────────────────────
   // If production is misconfigured (missing session/mint secret, no identity

@@ -22,3 +22,6 @@ deploy/source_data/*.pdf
 !deploy/source_data/NIST.CSWP.29.pdf
 sbom/
 *.db
+
+# Production Docker secrets (never commit real values)
+deploy/secrets/

@@ -1,0 +1,58 @@
+# Furix Compliance — PRODUCTION overlay (Wave-I deployment contract).
+#
+# Layers Docker secrets + production posture on top of the base compose:
+#
+#     cp -r secrets.example secrets   # then fill each file with a real value
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Secrets are mounted as files under /run/secrets/<name> and read via the app's
+# *_FILE convention, so no secret ever appears in the environment (`docker
+# inspect`), logs, or child processes. FURIX_ENV=production makes the stack fail
+# closed unless every secret + the TLS acknowledgement is present.
+name: furix-compliance
+
+secrets:
+  furix_api_keys:
+    file: ./secrets/api_keys.json
+  furix_session_secret:
+    file: ./secrets/session_secret.txt
+  furix_mint_secret:                 # shared: BFF signs, API verifies (must match)
+    file: ./secrets/mint_secret.txt
+  furix_connector_signing_secret:
+    file: ./secrets/connector_signing_secret.txt
+  furix_attest_keys:
+    file: ./secrets/attest_keys.json
+  furix_bff_users:
+    file: ./secrets/bff_users.json
+  furix_oidc_client_secret:
+    file: ./secrets/oidc_client_secret.txt
+
+services:
+  api:
+    environment:
+      FURIX_ENV: production
+      FURIX_TLS_TERMINATED: "1"          # TLS terminates at nginx / the ingress
+      FURIX_API_KEYS_FILE: /run/secrets/furix_api_keys
+      FURIX_OIDC_HS256_SECRET_FILE: /run/secrets/furix_mint_secret
+      FURIX_CONNECTOR_SIGNING_SECRET_FILE: /run/secrets/furix_connector_signing_secret
+      FURIX_ATTEST_KEYS_FILE: /run/secrets/furix_attest_keys
+    secrets:
+      - furix_api_keys
+      - furix_mint_secret
+      - furix_connector_signing_secret
+      - furix_attest_keys
+
+  web:
+    environment:
+      FURIX_ENV: production
+      FURIX_COOKIE_SECURE: "1"
+      # No static API key in prod — the BFF mints a per-user token (F3 fail-closed).
+      FURIX_SESSION_SECRET_FILE: /run/secrets/furix_session_secret
+      FURIX_BFF_MINT_SECRET_FILE: /run/secrets/furix_mint_secret
+      FURIX_BFF_USERS_FILE: /run/secrets/furix_bff_users
+      FURIX_OIDC_CLIENT_SECRET_FILE: /run/secrets/furix_oidc_client_secret
+    secrets:
+      - furix_session_secret
+      - furix_mint_secret
+      - furix_bff_users
+      - furix_oidc_client_secret

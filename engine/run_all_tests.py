@@ -50,6 +50,7 @@ MODULES = [
     "api.test_auth",
     "api.test_durable",
     "api.test_preflight",
+    "api.test_secrets_env",
     "api.test_posture_run",
     "api.test_integration",
 ]

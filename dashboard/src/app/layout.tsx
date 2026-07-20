@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import { AppFrame } from "@/components/layout/app-frame";
 
-const inter = Inter({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
+// Fonts are vendored locally (deployment contract): no build-time fetch from
+// Google Fonts, so the image builds fully offline / air-gapped and reproducibly.
+// The typeface comes from a local system stack defined on `--font-geist-sans`
+// in globals.css. To pin an exact bundled face, drop woff2 files into
+// `src/app/fonts/` and swap this for `next/font/local` — the CSS variable name
+// stays the same, so nothing else changes.
 
 export const metadata: Metadata = {
   title: "BYOC",
@@ -20,7 +21,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} font-sans antialiased`}>
+      <body className="font-sans antialiased">
         <AppFrame>{children}</AppFrame>
       </body>
     </html>

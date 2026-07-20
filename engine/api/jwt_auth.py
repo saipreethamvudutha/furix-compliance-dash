@@ -53,8 +53,10 @@ class OIDCConfig:
     @classmethod
     def from_env(cls) -> "OIDCConfig":
         import os
+
+        from .secrets_env import read_secret  # noqa: PLC0415
         return cls(
-            hs256_secret=os.environ.get("FURIX_OIDC_HS256_SECRET", ""),
+            hs256_secret=read_secret("FURIX_OIDC_HS256_SECRET", ""),
             issuer=os.environ.get("FURIX_OIDC_ISSUER", ""),
             audience=os.environ.get("FURIX_OIDC_AUDIENCE", ""),
             tenant_claim=os.environ.get("FURIX_OIDC_TENANT_CLAIM", "tenant"),

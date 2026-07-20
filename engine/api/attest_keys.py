@@ -24,13 +24,15 @@ import os
 
 from compliance_reporting.attestation import AttestationKeyRing
 
+from .secrets_env import read_secret
+
 
 def _is_prod() -> bool:
     return os.environ.get("FURIX_ENV", "development").lower() == "production"
 
 
 def attestation_keyring_for(tenant: str) -> AttestationKeyRing:
-    raw = os.environ.get("FURIX_ATTEST_KEYS")
+    raw = read_secret("FURIX_ATTEST_KEYS")
     if raw:
         data = json.loads(raw)
         # nested per-tenant shape if any value is itself a dict

@@ -72,8 +72,18 @@ def test_anonymous_access_denied():
     for path in ("/api/summary", "/api/frameworks", "/api/findings", "/api/reports"):
         assert c.get(path).status_code == 401, path
     assert c.post("/api/ingest", json={"text": "x"}).status_code == 401
-    # health is the only open endpoint
+    # health + readiness are the only open endpoints
     assert c.get("/api/health").status_code == 200
+
+
+def test_readiness_endpoint_is_open_and_reports_checks():
+    c, _ = _make_client()
+    for path in ("/readyz", "/api/readyz"):
+        r = c.get(path)
+        assert r.status_code == 200, (path, r.status_code)  # dev is ready
+        body = r.json()
+        assert body["ready"] is True
+        assert body["checks"]["report_store_writable"] is True
 
 
 def test_bad_key_denied():

@@ -9,15 +9,30 @@
 // login; this module just produces the {sub, role, tenant} the session needs.
 
 import crypto from "node:crypto";
+import fs from "node:fs";
 
 export type Fetch = typeof fetch;
+
+// Docker-secrets-friendly resolution (kept local so this module stays free of
+// relative imports and runs under Node's type-stripping test loader).
+function fileEnv(env: NodeJS.ProcessEnv, name: string): string {
+  const p = env[`${name}_FILE`];
+  if (p) {
+    try {
+      return fs.readFileSync(p, "utf8").trim();
+    } catch {
+      return "";
+    }
+  }
+  return env[name] ?? "";
+}
 
 // Self-contained AES-256-GCM seal/open over the server session key. Kept local
 // (not imported from ./session) so this security-critical module has zero
 // relative imports and can run under Node's type-stripping test runner. The key
 // derivation matches session.ts exactly (same secret → interchangeable).
 function secretKey(): Buffer {
-  const s = process.env.FURIX_SESSION_SECRET;
+  const s = fileEnv(process.env, "FURIX_SESSION_SECRET");
   if (!s) {
     if (process.env.NODE_ENV === "production" || process.env.FURIX_ENV === "production") {
       throw new Error("FURIX_SESSION_SECRET is required in production (fail-closed)");
@@ -77,7 +92,7 @@ export function oidcConfigFromEnv(env: NodeJS.ProcessEnv = process.env): OidcCon
   return {
     issuer: issuer.replace(/\/$/, ""),
     clientId,
-    clientSecret: env.FURIX_OIDC_CLIENT_SECRET || undefined,
+    clientSecret: fileEnv(env, "FURIX_OIDC_CLIENT_SECRET") || undefined,
     redirectUri,
     scope: env.FURIX_OIDC_SCOPE || "openid profile email",
     roleClaim: env.FURIX_OIDC_ROLE_CLAIM || "role",

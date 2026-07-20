@@ -5,14 +5,29 @@
 // Without the secret it falls back to the static FURIX_API_KEY.
 
 import crypto from "node:crypto";
+import fs from "node:fs";
 import type { SessionData } from "./session";
+
+// Docker-secrets-friendly resolution (kept local so this module stays free of
+// relative value imports and runs under Node's type-stripping test loader).
+function fileEnv(name: string): string {
+  const p = process.env[`${name}_FILE`];
+  if (p) {
+    try {
+      return fs.readFileSync(p, "utf8").trim();
+    } catch {
+      return "";
+    }
+  }
+  return process.env[name] ?? "";
+}
 
 function b64url(buf: Buffer | string): string {
   return Buffer.from(buf).toString("base64url");
 }
 
 export function mintUserToken(session: SessionData): string | null {
-  const secret = process.env.FURIX_BFF_MINT_SECRET;
+  const secret = fileEnv("FURIX_BFF_MINT_SECRET");
   if (!secret) return null;
   const now = Math.floor(Date.now() / 1000);
   const header = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));

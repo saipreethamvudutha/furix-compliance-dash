@@ -70,6 +70,18 @@ services:
       FURIX_TLS_TERMINATED: ${FURIX_TLS_TERMINATED:-}
       FURIX_RATE_LIMIT_PER_MIN: ${FURIX_RATE_LIMIT_PER_MIN:-240}
       FURIX_MAX_INGEST_CHARS: ${FURIX_MAX_INGEST_CHARS:-20971520}
+      # ── Wave-F/G/H API secrets ────────────────────────────────────────────
+      # The API verifies the BFF's per-user minted token with this HS256 secret,
+      # so it MUST equal the web service's FURIX_BFF_MINT_SECRET (dev default here;
+      # in prod both come from the same Docker secret — see docker-compose.prod.yml).
+      FURIX_OIDC_HS256_SECRET: ${FURIX_OIDC_HS256_SECRET:-furix-dev-mint-secret}
+      FURIX_OIDC_ISSUER: ${FURIX_OIDC_ISSUER:-furix-bff}
+      FURIX_OIDC_AUDIENCE: ${FURIX_OIDC_AUDIENCE:-furix}
+      # Attestation signing key ring (JSON) + connector manifest signing secret.
+      FURIX_ATTEST_KEYS: ${FURIX_ATTEST_KEYS:-}
+      FURIX_CONNECTOR_SIGNING_SECRET: ${FURIX_CONNECTOR_SIGNING_SECRET:-furix-dev-connector-secret}
+      # AWS collector (Wave-G): default role assumed in each member account.
+      FURIX_AWS_MEMBER_ROLE: ${FURIX_AWS_MEMBER_ROLE:-OrganizationAccountAccessRole}
     volumes:
       - ./source_data:/data/source   # drop the SCF JSON + PDFs here (host side)
       - furix_reports:/data/reports
@@ -89,9 +101,29 @@ services:
         NEXT_PUBLIC_API_URL: ""      # unused by the client now (BFF is same-origin)
     environment:
       # Server-side BFF config (P0-1): the browser never sees these. The Next
-      # server attaches FURIX_API_KEY when proxying /bff/* to the api service.
+      # server attaches a per-user minted token (or FURIX_API_KEY) when proxying
+      # /bff/* to the api service.
       FURIX_API_URL: http://api:8000
       FURIX_API_KEY: ${FURIX_API_KEY:-furix-dev-key}
+      FURIX_ENV: ${FURIX_ENV:-development}
+      # ── Wave-F/G BFF secrets (fail-closed in production; see prod overlay) ──
+      # Sealed-session key + per-user token minting secret. The mint secret MUST
+      # equal the api's FURIX_OIDC_HS256_SECRET.
+      FURIX_SESSION_SECRET: ${FURIX_SESSION_SECRET:-furix-dev-session-secret-change-me}
+      FURIX_BFF_MINT_SECRET: ${FURIX_BFF_MINT_SECRET:-furix-dev-mint-secret}
+      FURIX_COOKIE_SECURE: ${FURIX_COOKIE_SECURE:-0}
+      # Identity source: a JSON user directory OR OIDC. In production one MUST be
+      # set (default demo users are disabled in prod).
+      FURIX_BFF_USERS: ${FURIX_BFF_USERS:-}
+      # OIDC (authorization-code + PKCE) — enabled when these are set.
+      FURIX_OIDC_ISSUER: ${FURIX_OIDC_ISSUER:-}
+      FURIX_OIDC_CLIENT_ID: ${FURIX_OIDC_CLIENT_ID:-}
+      FURIX_OIDC_CLIENT_SECRET: ${FURIX_OIDC_CLIENT_SECRET:-}
+      FURIX_OIDC_REDIRECT_URI: ${FURIX_OIDC_REDIRECT_URI:-}
+      FURIX_OIDC_ROLE_CLAIM: ${FURIX_OIDC_ROLE_CLAIM:-role}
+      FURIX_OIDC_TENANT_CLAIM: ${FURIX_OIDC_TENANT_CLAIM:-tenant}
+      FURIX_OIDC_DEFAULT_ROLE: ${FURIX_OIDC_DEFAULT_ROLE:-auditor}
+      FURIX_OIDC_DEFAULT_TENANT: ${FURIX_OIDC_DEFAULT_TENANT:-default}
     depends_on:
       - api
     restart: unless-stopped

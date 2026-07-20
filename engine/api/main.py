@@ -34,6 +34,7 @@ from compliance_reporting.connector_registry import ConnectorRegistry, Connector
 
 from . import service
 from .attest_keys import attestation_keyring_for
+from .secrets_env import read_secret
 from .auth import (
     AuthError, AuthRegistry, ForbiddenError, Principal,
     SCOPE_ADMIN, SCOPE_EXPORT, SCOPE_INGEST, SCOPE_READ,
@@ -87,8 +88,9 @@ def _connector_registry_for(tenant: str) -> ConnectorRegistry:
         return r
 
 
-# Connector manifests are mandatory-signed; the secret is server-only config.
-_CONNECTOR_SIGNING_SECRET = os.environ.get("FURIX_CONNECTOR_SIGNING_SECRET", "")
+# Connector manifests are mandatory-signed; the secret is server-only config
+# (Docker-secret-friendly via FURIX_CONNECTOR_SIGNING_SECRET_FILE).
+_CONNECTOR_SIGNING_SECRET = read_secret("FURIX_CONNECTOR_SIGNING_SECRET", "")
 
 # Hardening knobs (env-overridable)
 _MAX_BODY_BYTES = int(os.environ.get("FURIX_MAX_BODY_BYTES", str(50 * 1024 * 1024)))  # 50 MB
@@ -202,10 +204,65 @@ class ConfigBody(BaseModel):
     snapshot: dict = {}
 
 
-# ── health (unauthenticated, minimal) ─────────────────────────────────────────
+# ── health / readiness (unauthenticated, minimal) ─────────────────────────────
 @app.get("/api/health")
 def health():
+    """Liveness: the process is up and serving. Cheap; never touches deps."""
     return {"status": "ok", "engine_version": _settings.engine_version}
+
+
+@app.get("/readyz")
+@app.get("/api/readyz")
+def readyz():
+    """
+    Readiness (deployment contract): 200 only when the service can actually do
+    work — the tenant report-store root is writable, the job DB directory exists,
+    and (in production) the fail-closed preflight has no blocking issues. Returns
+    503 with the specific reasons otherwise, so an orchestrator holds traffic
+    until the pod is genuinely ready.
+    """
+    checks: dict[str, Any] = {}
+    reasons: list[str] = []
+
+    # report store writable
+    try:
+        root = _stores.root
+        root.mkdir(parents=True, exist_ok=True)
+        probe = root / ".readyz"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        checks["report_store_writable"] = True
+    except Exception as e:  # noqa: BLE001
+        checks["report_store_writable"] = False
+        reasons.append(f"report store not writable: {e}")
+
+    # job DB directory present (durable jobs survive restarts)
+    job_db = os.environ.get("FURIX_JOB_DB", "")
+    if job_db:
+        job_dir_ok = os.path.isdir(os.path.dirname(job_db) or ".")
+        checks["job_db_dir"] = job_dir_ok
+        if not job_dir_ok:
+            reasons.append(f"FURIX_JOB_DB directory missing: {job_db}")
+    else:
+        checks["job_db_dir"] = None  # not configured (dev)
+
+    # production preflight — in production, any outstanding preflight issue holds
+    # readiness (weak keys, no durable job DB, unacknowledged TLS, etc.).
+    is_prod = os.environ.get("FURIX_ENV", "development").lower() == "production"
+    if is_prod:
+        from .preflight import collect_issues  # noqa: PLC0415
+        prod_issues = collect_issues()
+        checks["preflight_issues"] = len(prod_issues)
+        reasons += prod_issues
+    else:
+        checks["preflight_issues"] = None  # development: not gated on preflight
+
+    ready = not reasons
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={"ready": ready, "checks": checks, "reasons": reasons,
+                 "engine_version": _settings.engine_version},
+    )
 
 
 # ── async ingest: submit a background job, poll GET /api/jobs/{id} ─────────────

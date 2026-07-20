@@ -11,8 +11,11 @@
 
 import { test } from "node:test";
 import assert from "node:assert";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-import { isProd, prodReadiness } from "./env.ts";
+import { isProd, prodReadiness, readSecret } from "./env.ts";
 import { bffAllows, mintUserToken } from "./token.ts";
 
 // ── env.ts: fail-closed production readiness ──────────────────────────────────
@@ -112,4 +115,17 @@ test("admin may do everything; health is always open", () => {
 test("attestation submission is a write (ingest-capable roles only)", () => {
   assert.equal(bffAllows("analyst", "POST", "api/attestations"), true);
   assert.equal(bffAllows("auditor", "POST", "api/attestations"), false);
+});
+
+// ── env.ts: Docker-secrets file resolution ────────────────────────────────────
+test("readSecret prefers X_FILE over inline X and trims it", () => {
+  const f = path.join(os.tmpdir(), `furix-secret-${process.pid}.txt`);
+  fs.writeFileSync(f, "  file-value\n");
+  try {
+    assert.equal(readSecret("MY_SECRET", { MY_SECRET: "inline", MY_SECRET_FILE: f }), "file-value");
+    assert.equal(readSecret("MY_SECRET", { MY_SECRET: "inline" }), "inline");
+    assert.equal(readSecret("MY_SECRET", {}), "");
+  } finally {
+    fs.unlinkSync(f);
+  }
 });

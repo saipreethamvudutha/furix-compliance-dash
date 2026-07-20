@@ -6,7 +6,7 @@
 // no external dependency.
 
 import crypto from "node:crypto";
-import { isProd } from "./env";
+import { isProd, readSecret } from "./env";
 
 const COOKIE_NAME = "furix_session";
 const CSRF_COOKIE = "furix_csrf";
@@ -25,7 +25,7 @@ export type SessionData = {
 // missing secret in production throws (fail-closed) rather than sealing sessions
 // with a well-known key anyone could forge.
 function secretKey(): Buffer {
-  const s = process.env.FURIX_SESSION_SECRET;
+  const s = readSecret("FURIX_SESSION_SECRET");
   if (!s) {
     if (isProd()) {
       throw new Error("FURIX_SESSION_SECRET is required in production (fail-closed)");

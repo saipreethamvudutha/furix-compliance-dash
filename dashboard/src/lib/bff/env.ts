@@ -6,10 +6,27 @@
 // module centralises "are we production?" and "is the BFF safely configured?"
 // so the proxy can return 503 instead of proxying with insecure defaults.
 
+import fs from "node:fs";
+
 export type Env = Record<string, string | undefined>;
 
 export function isProd(env: Env = process.env): boolean {
   return env.NODE_ENV === "production" || env.FURIX_ENV === "production";
+}
+
+// Docker-secrets-friendly resolution: `X_FILE` (a mounted secret file) wins over
+// the inline `X`, so production injects secrets as files, not env vars that leak
+// into `docker inspect` / logs / child processes.
+export function readSecret(name: string, env: Env = process.env): string {
+  const file = env[`${name}_FILE`];
+  if (file) {
+    try {
+      return fs.readFileSync(file, "utf8").trim();
+    } catch {
+      return ""; // unreadable configured secret → fail-closed at the caller
+    }
+  }
+  return env[name] ?? "";
 }
 
 // Returns the list of production misconfigurations. In development it is always

@@ -118,6 +118,22 @@ def test_exports_validate_against_official_nist_schema():
     assert empty["ok"], empty
 
 
+def test_clean_run_ar_omits_empty_findings_and_still_validates():
+    """A clean report (no at-risk controls) yields an AR with no findings/
+    observations arrays (OSCAL forbids empty ones) that still schema-validates."""
+    from .oscal import validate_oscal_schema
+    report = _report()
+    for c in report["controls"]:
+        c["status"] = "compliant"  # simulate a fully-clean assessment
+    ar = build_assessment_results(report)
+    result = ar["assessment-results"]["results"][0]
+    assert "findings" not in result and "observations" not in result
+    assert "reviewed-controls" in result  # still records what was assessed
+    res = validate_oscal_schema(ar)
+    if res["ran"]:
+        assert res["ok"], res
+
+
 def test_target_id_is_a_valid_oscal_token():
     """Control ids with spaces are slugified into valid OSCAL tokens for target-id,
     with the human id preserved in a prop."""

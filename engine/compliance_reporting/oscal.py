@@ -93,6 +93,27 @@ def build_assessment_results(report: Mapping[str, Any]) -> dict[str, Any]:
             "props": [{"name": "severity", "value": c.get("worst_severity", "medium")},
                       {"name": "furix-control-id", "value": cid}],
         })
+    result: dict[str, Any] = {
+        "uuid": _uuid("result", rid),
+        "title": "Deterministic control assessment",
+        "description": "Furix event + config-posture assurance run.",
+        "start": report.get("generated_at", ""),
+        # OSCAL requires each result to declare which controls it reviewed.
+        # Furix assesses the full monitored control set.
+        "reviewed-controls": {
+            "control-selections": [{
+                "description": "All CIS controls monitored by this Furix run.",
+                "include-all": {},
+            }],
+        },
+    }
+    # `observations`/`findings` are optional and OSCAL forbids empty arrays — a
+    # clean run (nothing not-satisfied) simply omits them (the reviewed-controls
+    # still records that everything was assessed).
+    if observations:
+        result["observations"] = observations
+    if findings:
+        result["findings"] = findings
     return {
         "assessment-results": {
             "uuid": _uuid("ar", rid),
@@ -104,22 +125,7 @@ def build_assessment_results(report: Mapping[str, Any]) -> dict[str, Any]:
             "import-ap": {"href": "https://furix.local/assessment-plan/deterministic",
                           "remarks": "Furix runs a fixed deterministic assessment; the plan is "
                                      "the versioned rule pack recorded in metadata props."},
-            "results": [{
-                "uuid": _uuid("result", rid),
-                "title": "Deterministic control assessment",
-                "description": "Furix event + config-posture assurance run.",
-                "start": report.get("generated_at", ""),
-                # OSCAL requires each result to declare which controls it reviewed.
-                # Furix assesses the full monitored control set.
-                "reviewed-controls": {
-                    "control-selections": [{
-                        "description": "All CIS controls monitored by this Furix run.",
-                        "include-all": {},
-                    }],
-                },
-                "observations": observations,
-                "findings": findings,
-            }],
+            "results": [result],
         }
     }
 

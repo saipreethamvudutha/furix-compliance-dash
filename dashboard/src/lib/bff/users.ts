@@ -9,7 +9,7 @@
 // FURIX_BFF_USERS (JSON: [{email, passHash, role, tenant}]).
 
 import crypto from "node:crypto";
-import { isProd } from "./env";
+import { isProd, readSecret } from "./env";
 
 export type BffUser = { email: string; passHash: string; role: string; tenant: string };
 
@@ -27,7 +27,7 @@ const DEFAULT_USERS: BffUser[] = [
 ];
 
 function users(): BffUser[] {
-  const raw = process.env.FURIX_BFF_USERS;
+  const raw = readSecret("FURIX_BFF_USERS");
   if (raw) {
     try {
       return JSON.parse(raw) as BffUser[];
