@@ -78,3 +78,11 @@ class PostureRunStore:
     def latest(self, tenant: str) -> dict[str, Any] | None:
         runs = self.list(tenant, limit=1)
         return runs[0] if runs else None
+
+    def by_report(self, tenant: str, report_id: str) -> dict[str, Any] | None:
+        """The posture run that produced a specific report (exact provenance)."""
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT run_json FROM posture_runs WHERE tenant=? AND report_id=? "
+                "ORDER BY completed_at DESC LIMIT 1", (tenant, report_id)).fetchone()
+        return json.loads(r["run_json"]) if r else None

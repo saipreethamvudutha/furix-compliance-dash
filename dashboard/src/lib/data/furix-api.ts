@@ -291,7 +291,14 @@ export type ControlDetail = {
   worst_severity?: string | null;
   profile: ControlProfile;
   evidence_freshness: string;
+  oldest_evidence_at?: string | null;
   last_assessed: string | null;
+  assertion_freshness?: Array<{
+    spec_id: string;
+    status: string;
+    freshness: { as_of?: string; collected_at?: string; age_seconds?: number; slo_seconds?: number; stale?: boolean } | null;
+    evidence: Array<{ resource_id?: string; observed_at?: string; raw_uri?: string }>;
+  }>;
   framework_mappings: { nist_csf: string[]; pci_dss: string[]; hipaa: string[] };
   linked_findings: Finding[];
   exceptions: Array<Record<string, unknown>>;

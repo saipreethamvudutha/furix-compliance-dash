@@ -13,10 +13,13 @@ from __future__ import annotations
 from .collectors import (
     AwsOrgIamCollector,
     Checkpoint,
+    CheckpointStore,
     CollectionError,
     FakeAwsClient,
+    Page,
     PermissionError_,
     RetryPolicy,
+    paginate,
     sign_manifest,
     verify_manifest,
 )
@@ -93,6 +96,50 @@ def test_independent_mismatch_aborts_collection():
 
 
 # ── durable checkpoints ───────────────────────────────────────────────────────
+def test_crash_resume_pagination_from_durable_checkpoint():
+    """A collection that crashes mid-pagination resumes from the durably-persisted
+    cursor — remaining pages only, no page fetched twice, no items lost/duplicated."""
+    import tempfile
+
+    root = tempfile.mkdtemp(prefix="furix_crashcp_")
+    pages = [Page(items=[{"account_id": str(i)}], next_cursor=(str(i + 1) if i < 4 else None))
+             for i in range(5)]  # cursors "0".."4", one item each
+
+    fetched: list[str | None] = []
+    processed: list[dict] = []          # simulates durable per-page persistence
+
+    def make_fetch(crash_at: int | None):
+        def fetch(cursor):
+            idx = int(cursor) if cursor else 0
+            fetched.append(cursor)
+            if crash_at is not None and idx == crash_at:
+                raise RuntimeError("simulated worker crash")
+            processed.extend(pages[idx].items)   # persist BEFORE advancing the cursor
+            return pages[idx]
+        return fetch
+
+    # run 1: crash while fetching page index 3
+    cp = CheckpointStore(root, tenant="acme", connector="aws").load()
+    try:
+        paginate(make_fetch(crash_at=3), RetryPolicy(base_delay=0.0), cp, "accounts")
+        raise AssertionError("expected the simulated crash")
+    except RuntimeError:
+        pass
+    # the checkpoint durably advanced to the resume point (cursor "3")
+    reloaded = CheckpointStore(root, tenant="acme", connector="aws").load()
+    assert reloaded.get("accounts") == "3"
+    pre_crash_fetched = list(fetched)
+    assert pre_crash_fetched == [None, "1", "2", "3"]  # pages 0,1,2 ok; crash fetching "3"
+
+    # run 2: resume from the persisted checkpoint → remaining pages only
+    fetched.clear()
+    paginate(make_fetch(crash_at=None), RetryPolicy(base_delay=0.0), reloaded, "accounts")
+    assert fetched == ["3", "4"]                       # NO re-fetch of completed pages 0..2
+    # every account collected exactly once across the crash boundary
+    ids = [a["account_id"] for a in processed]
+    assert sorted(ids) == ["0", "1", "2", "3", "4"] and len(ids) == len(set(ids))
+
+
 def test_durable_checkpoint_persists_and_resumes(tmp_root=None):
     import tempfile
 

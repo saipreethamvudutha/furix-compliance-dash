@@ -52,6 +52,83 @@ jobs:
       - name: BFF fail-closed + per-user authorization tests
         run: npm test
 
+  full-pipeline-smoke:
+    # Boots the API + BFF and drives the whole product through the browser-facing
+    # BFF (login → collect → posture run → OSCAL export) — the full pipeline in CI.
+    runs-on: ubuntu-latest
+    needs: [engine-tests, dashboard]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install engine deps
+        working-directory: engine
+        run: pip install -r test-requirements.txt
+      - name: Install dashboard
+        working-directory: dashboard
+        run: npm ci --no-audit --no-fund
+      - name: Boot API + BFF and run the full-stack smoke test
+        env:
+          FURIX_ENV: development
+          FURIX_API_KEYS: '[{"key":"furix-dev-key","key_id":"dev","tenant":"default","role":"admin"}]'
+          FURIX_CONNECTOR_SIGNING_SECRET: ci-connector-secret
+          FURIX_REPORT_STORE: /tmp/furix-ci-store
+          FURIX_JOB_DB: /tmp/furix-ci-store/jobs.db
+          FURIX_TLS_TERMINATED: "1"
+          FURIX_API_URL: http://127.0.0.1:8000
+          FURIX_COOKIE_SECURE: "0"   # http in CI; dev server keeps cookies non-Secure
+        run: |
+          mkdir -p /tmp/furix-ci-store
+          ( cd engine && uvicorn api.main:app --host 127.0.0.1 --port 8000 --log-level warning & )
+          ( cd dashboard && npm run dev -- -p 3010 & )
+          for i in $(seq 1 45); do curl -fsS http://localhost:3010/bff/api/readyz && break || sleep 2; done
+          BASE_URL=http://localhost:3010 bash deploy/smoke-test.sh
+
+  compose-validate:
+    # The base + production compose overlays must be structurally valid.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate base compose
+        working-directory: deploy
+        run: docker compose -f docker-compose.yml config >/dev/null
+      - name: Validate production overlay (with placeholder secret files)
+        working-directory: deploy
+        run: |
+          cp -r secrets.example secrets
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml config >/dev/null
+
+  rls-tests:
+    # Live two-tenant Row-Level Security isolation against a real Postgres.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: furix
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply RLS schema
+        env: { PGPASSWORD: postgres }
+        run: psql -h localhost -U postgres -d furix -v ON_ERROR_STOP=1 -f deploy/db/rls-schema.sql
+      - name: Run two-tenant RLS isolation test (as the non-superuser app role)
+        env: { PGPASSWORD: postgres }
+        run: |
+          # grant the app role a password + connect as it so RLS is enforced
+          psql -h localhost -U postgres -d furix -c "ALTER ROLE furix_app WITH PASSWORD 'app';"
+          PGPASSWORD=app psql -h localhost -U furix_app -d furix -v ON_ERROR_STOP=1 -f deploy/db/rls-test.sql
+
   sbom:
     runs-on: ubuntu-latest
     needs: [engine-tests, dashboard]

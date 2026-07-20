@@ -100,6 +100,42 @@ def test_detail_reflects_freshness_against_cadence():
     assert d["evidence_freshness"] == "stale"
 
 
+def test_per_assertion_freshness_and_exact_producing_run():
+    """Wave-J: freshness comes from the actual backing evidence, and the control
+    links to the EXACT posture run that produced its verdict."""
+    store = _seeded_store()
+    # Control 5 is backed by the demo-aws CFG-AWS-KEY-ROTATION assertion
+    d = service.get_control_workspace(store, "acme", "Control 5", registry=_REG, now=_NOW)
+    # per-assertion freshness is surfaced with each assertion's evidence
+    assert d["assertion_freshness"], "expected backing assertions with freshness"
+    a0 = d["assertion_freshness"][0]
+    assert "freshness" in a0 and a0["evidence"]
+    assert a0["evidence"][0]["observed_at"]  # per-evidence observation time
+    assert d["evidence_freshness"] in ("fresh", "stale", "unknown")
+    assert d.get("oldest_evidence_at")  # derived from actual evidence, not report time
+
+    # the linked posture run is the one that produced THIS report (exact provenance)
+    from compliance_reporting.posture_run import PostureRunStore
+    pr = PostureRunStore(store.root).by_report("acme", d["evidence_lineage"]["report_id"])
+    assert pr is not None
+    assert d["evidence_lineage"]["posture_run"]["run_id"] == pr["run_id"]
+
+
+def test_stale_evidence_marks_control_stale():
+    """A control whose backing assertion evidence is older than its cadence is
+    reported stale even if the report itself is recent."""
+    store = _seeded_store()
+    # Control 5's AWS evidence is observed at collection time; a tiny cadence far
+    # in the future makes the actual backing evidence stale (not just the report).
+    from compliance_reporting.control_profile import ControlProfileStore
+    ControlProfileStore(store.root).update("acme", "Control 5", {"test_cadence_days": 1},
+                                           updated_by="admin", updated_at=_NOW)
+    d = service.get_control_workspace(store, "acme", "Control 5", registry=_REG,
+                                      now="2026-12-01T00:00:00+00:00")
+    assert d["evidence_freshness"] == "stale"
+    assert d["oldest_evidence_at"] is not None  # derived from the evidence, not report time
+
+
 def test_unknown_control_raises():
     store = _seeded_store()
     try:

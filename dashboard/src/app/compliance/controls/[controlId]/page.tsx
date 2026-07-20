@@ -264,6 +264,40 @@ export default function ControlDetailPage() {
         </dl>
       </section>
 
+      {/* ── per-assertion evidence freshness ── */}
+      {d.assertion_freshness && d.assertion_freshness.length > 0 && (
+        <section className="mb-6 rounded-xl border border-slate-200 p-5 dark:border-slate-700">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
+            Evidence freshness (per assertion) · oldest{" "}
+            {d.oldest_evidence_at ? new Date(d.oldest_evidence_at).toLocaleDateString() : "—"}
+          </h2>
+          <ul className="space-y-2 text-sm">
+            {d.assertion_freshness.map((a) => (
+              <li key={a.spec_id} className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-mono text-xs">{a.spec_id}</span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                      a.freshness?.stale
+                        ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                        : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                    }`}
+                  >
+                    {a.freshness?.stale ? "stale" : "fresh"}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    observed{" "}
+                    {a.evidence[0]?.observed_at
+                      ? new Date(a.evidence[0].observed_at).toLocaleDateString()
+                      : "—"}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {/* ── linked findings + exceptions ── */}
       <section className="mb-6 rounded-xl border border-slate-200 p-5 dark:border-slate-700">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">

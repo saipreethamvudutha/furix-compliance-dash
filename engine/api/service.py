@@ -202,6 +202,42 @@ def _freshness(last_assessed: str | None, cadence_days: int, now: str) -> str:
         return "unknown"
 
 
+def _control_assertions(report: dict[str, Any] | None, control_id: str) -> list[dict[str, Any]]:
+    """The config assertions backing a control (each carries its own freshness)."""
+    if not report:
+        return []
+    return [a for a in report.get("config_assertions", [])
+            if control_id in (a.get("control_ids") or [])]
+
+
+def _evidence_freshness_for(assertions: list[dict[str, Any]], cadence_days: int,
+                            now: str) -> tuple[str, str | None]:
+    """Per-control freshness derived from the ACTUAL evidence backing it (the
+    oldest contributing observation), not merely the report time. Returns
+    (state, oldest_observed_at)."""
+    observed: list[str] = []
+    any_stale = False
+    for a in assertions:
+        fr = a.get("freshness") or {}
+        if fr.get("stale"):
+            any_stale = True
+        col = fr.get("collected_at") or fr.get("as_of")
+        if col:
+            observed.append(col)
+    if not observed:
+        return "unknown", None
+    oldest = min(observed)
+    if any_stale:
+        return "stale", oldest
+    # also enforce the control's own cadence against the oldest evidence
+    try:
+        if (datetime.fromisoformat(now) - datetime.fromisoformat(oldest)).days > cadence_days:
+            return "stale", oldest
+    except ValueError:
+        pass
+    return "fresh", oldest
+
+
 def _framework_maps(registry: FrameworkRegistry, cid: str) -> dict[str, list[str]]:
     return {
         "nist_csf": list(registry.cis_to_nist.get(cid, ()) or ()),
@@ -243,12 +279,18 @@ def list_control_workspace(store: ReportStore, tenant: str, *,
         cid = c["control_id"]
         prof = profiles.get(cid) or cps.get(tenant, cid)
         maps = _framework_maps(registry, cid)
+        # freshness from the ACTUAL backing evidence (falls back to report time)
+        assertions = _control_assertions(report, cid)
+        fresh_state, oldest = _evidence_freshness_for(assertions, prof["test_cadence_days"], now)
+        if fresh_state == "unknown":
+            fresh_state = _freshness(last_assessed, prof["test_cadence_days"], now)
         rows.append({
             "control_id": cid, "title": c.get("title", cid), "status": c.get("status", "unknown"),
             "owner": prof["owner"], "applicability": prof["applicability"],
             "verification_method": prof["verification_method"],
             "test_cadence_days": prof["test_cadence_days"],
-            "evidence_freshness": _freshness(last_assessed, prof["test_cadence_days"], now),
+            "evidence_freshness": fresh_state,
+            "oldest_evidence_at": oldest,
             "last_assessed": last_assessed,
             "open_findings": open_by_ctrl.get(cid, 0),
             "framework_counts": {k: len(v) for k, v in maps.items()},
@@ -278,9 +320,25 @@ def get_control_workspace(store: ReportStore, tenant: str, control_id: str, *,
     exceptions = [{"finding_id": f["finding_id"], **f["exception"]}
                   for f in findings if f.get("exception")]
 
-    pr = PostureRunStore(store.root).latest(tenant)
+    # link to the EXACT posture run that produced this report (not just latest)
+    report_id = report.get("report_id") if report else None
+    prs = PostureRunStore(store.root)
+    pr = (prs.by_report(tenant, report_id) if report_id else None) or prs.latest(tenant)
+
+    # per-assertion freshness backing this control
+    assertions = _control_assertions(report, control_id)
+    assertion_freshness = [{
+        "spec_id": a.get("spec_id"), "status": a.get("status"),
+        "freshness": a.get("freshness"),
+        "evidence": [{"resource_id": e.get("resource_id"), "observed_at": e.get("observed_at"),
+                      "raw_uri": e.get("raw_uri")} for e in (a.get("evidence") or [])],
+    } for a in assertions]
+    fresh_state, oldest = _evidence_freshness_for(assertions, prof["test_cadence_days"], now)
+    if fresh_state == "unknown":
+        fresh_state = _freshness(last_assessed, prof["test_cadence_days"], now)
+
     lineage = {
-        "report_id": report.get("report_id") if report else None,
+        "report_id": report_id,
         "report_integrity_sha256": (report.get("integrity", {}) or {}).get("content_sha256") if report else None,
         "evidence_mode": ctrl.get("evidence_mode"),
         "config_passing": ctrl.get("config_passing", []),
@@ -301,8 +359,10 @@ def get_control_workspace(store: ReportStore, tenant: str, control_id: str, *,
         "status": ctrl.get("status", "unknown"),
         "worst_severity": ctrl.get("worst_severity"),
         "profile": prof,
-        "evidence_freshness": _freshness(last_assessed, prof["test_cadence_days"], now),
+        "evidence_freshness": fresh_state,
+        "oldest_evidence_at": oldest,
         "last_assessed": last_assessed,
+        "assertion_freshness": assertion_freshness,   # per-assertion / per-evidence
         "framework_mappings": _framework_maps(registry, control_id),
         "linked_findings": findings,
         "exceptions": exceptions,
