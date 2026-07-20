@@ -235,6 +235,38 @@ def test_connector_tenant_isolation():
     assert c.get("/api/connectors", headers=_H["globex"]).json() == []
 
 
+# ── unified posture-run pipeline (Wave-H) ─────────────────────────────────────
+def test_posture_run_links_every_stage_via_api():
+    c, _ = _make_client()
+    c.post("/api/connectors", json={"connector_id": "pr1", "kind": "demo-aws"}, headers=_H["admin"])
+    # analyst may not run a posture run
+    assert c.post("/api/connectors/pr1/posture-run", headers=_H["analyst"]).status_code == 403
+    r = c.post("/api/connectors/pr1/posture-run", headers=_H["admin"])
+    assert r.status_code == 201, r.text
+    run = r.json()
+    assert run["verified"] is True and run["report_id"]
+    assert run["collection"]["signed"] and run["collection"]["reconciled"]
+    assert len(run["evidence"]["snapshot_sha256"]) == 64
+    assert run["evaluation"]["assertion_total"] >= 1
+    assert len(run["findings"]) == len(run["affected_controls"])
+
+    # the run is listable + retrievable, and readable by an auditor
+    listed = c.get("/api/posture-runs", headers=_H["auditor"]).json()
+    assert any(x["run_id"] == run["run_id"] for x in listed)
+    got = c.get(f"/api/posture-runs/{run['run_id']}", headers=_H["auditor"])
+    assert got.status_code == 200 and got.json()["report_id"] == run["report_id"]
+    # the linked report is now the tenant's latest, and OSCAL export schema-validates
+    assert c.get("/api/audit/export", headers=_H["admin"]).json()["oscal"]["validation_ok"] is True
+
+
+def test_posture_run_tenant_isolation():
+    c, _ = _make_client()
+    c.post("/api/connectors", json={"connector_id": "pr2", "kind": "demo-aws"}, headers=_H["admin"])
+    c.post("/api/connectors/pr2/posture-run", headers=_H["admin"])
+    # globex admin sees none of acme's posture runs
+    assert c.get("/api/posture-runs", headers=_H["globex"]).json() == []
+
+
 # ── malformed input handling ──────────────────────────────────────────────────
 def test_malformed_requests_are_rejected_cleanly():
     c, _ = _make_client()

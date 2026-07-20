@@ -10,6 +10,7 @@ is a thin shell over these functions.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Sequence
 
@@ -44,30 +45,135 @@ def _demo_aws_client():
                          page_size=2, independent_count=3)
 
 
+def _connector_client(kind: str, cfg: Mapping[str, Any]):
+    if kind == "demo-aws":
+        return _demo_aws_client()
+    if kind == "aws-org-iam":
+        from compliance_reporting.aws_boto3 import Boto3AwsClient  # noqa: PLC0415
+        return Boto3AwsClient(
+            member_role_name=cfg.get("member_role_name", "OrganizationAccountAccessRole"),
+            org_role_arn=cfg.get("org_role_arn"), external_id=cfg.get("external_id"),
+            region=cfg.get("region", "us-east-1"))
+    raise ValueError(f"unknown connector kind {kind!r}")
+
+
+def collect_snapshot(tenant: str, kind: str, cfg: Mapping[str, Any],
+                     signing_secret: str) -> dict[str, Any]:
+    """Run a connector and return the full {snapshot, manifest} (mandatory-signed)."""
+    from compliance_reporting.collectors import AwsOrgIamCollector, RetryPolicy  # noqa: PLC0415
+    collector = AwsOrgIamCollector(client=_connector_client(kind, cfg), tenant=tenant,
+                                   signing_secret=signing_secret, retry=RetryPolicy(base_delay=0.0))
+    return collector.collect(collected_at=now_iso())
+
+
 def make_connector_runner(tenant: str, signing_secret: str) -> Callable[[Mapping[str, Any]], dict]:
     """Build a runner(job)->manifest for the ConnectorScheduler. Dispatches on
     the job 'kind': 'demo-aws' (deterministic, no creds) or 'aws-org-iam' (the
     live boto3 collector). Manifests are mandatory-signed (fail-closed)."""
-    from compliance_reporting.collectors import AwsOrgIamCollector, RetryPolicy  # noqa: PLC0415
 
     def runner(job: Mapping[str, Any]) -> dict:
-        kind = job["kind"]
-        cfg = job.get("config", {}) or {}
-        if kind == "demo-aws":
-            client = _demo_aws_client()
-        elif kind == "aws-org-iam":
-            from compliance_reporting.aws_boto3 import Boto3AwsClient  # noqa: PLC0415
-            client = Boto3AwsClient(
-                member_role_name=cfg.get("member_role_name", "OrganizationAccountAccessRole"),
-                org_role_arn=cfg.get("org_role_arn"), external_id=cfg.get("external_id"),
-                region=cfg.get("region", "us-east-1"))
-        else:
-            raise ValueError(f"unknown connector kind {kind!r}")
-        collector = AwsOrgIamCollector(client=client, tenant=tenant, signing_secret=signing_secret,
-                                       retry=RetryPolicy(base_delay=0.0))
-        return collector.collect(collected_at=now_iso())["manifest"]
+        out = collect_snapshot(tenant, job["kind"], job.get("config", {}) or {}, signing_secret)
+        return out["manifest"]
 
     return runner
+
+
+def run_posture(store: ReportStore, *, tenant: str, snapshot: Mapping[str, Any],
+                manifest: Mapping[str, Any] | None = None, connector_id: str | None = None,
+                registry: FrameworkRegistry | None = None, occurred_at: str,
+                actor: str = "system", run_id: str | None = None) -> dict[str, Any]:
+    """
+    The unified posture-run pipeline (Wave-H): raw snapshot → immutable evidence
+    → reconciliation (from the signed manifest) → config assertions → verified
+    report → findings, recorded as ONE linked-ID PostureRun.
+
+    Returns the persisted PostureRun with linked ids across every stage.
+    """
+    import hashlib  # noqa: PLC0415
+
+    from compliance_reporting.evidence import EvidenceStore  # noqa: PLC0415
+    from compliance_reporting.exceptions import new_finding_id  # noqa: PLC0415
+    from compliance_reporting.posture_run import PostureRunStore  # noqa: PLC0415
+
+    registry = registry or FrameworkRegistry.from_live()
+    started = now_iso()
+
+    # 1. retain the raw snapshot as an immutable, content-addressed evidence object
+    ev = EvidenceStore(store.root)
+    snap_json = json.dumps(snapshot, sort_keys=True)
+    ev_obj = ev.put(snap_json, source="posture-snapshot", tenant=tenant,
+                    observed_at=snapshot.get("collected_at"))
+    if not ev.verify_object(ev_obj.sha256):
+        raise IngestError("posture snapshot evidence failed persistence verification")
+
+    # 2. ingest config → assertions + verified, stored report (persists per-resource evidence)
+    ing = ingest_config(store, snapshot, tenant=tenant, registry=registry)
+    report_id = ing["report_id"]
+    report = store.load(report_id)
+
+    # 3. evaluation summary (config assertions), with a combined evaluator hash
+    cas = report.get("config_assertions", [])
+    ev_pass = sum(1 for r in cas if r.get("status") == "pass")
+    ev_fail = sum(1 for r in cas if r.get("status") == "fail")
+    evaluator_hash = hashlib.sha256(
+        "|".join(sorted(r.get("evaluator_hash", "") for r in cas)).encode()).hexdigest()[:16]
+
+    # 4. open findings for every at-risk control; collect the linked ids
+    fs = _finding_store(store)
+    finding_ids: list[str] = []
+    affected: list[str] = []
+    for c in report["controls"]:
+        if c["status"] != "at_risk":
+            continue
+        fid = new_finding_id(tenant, c["control_id"], "cis_v8", report_id)
+        fs.open_finding(fid, control_id=c["control_id"], framework_id="cis_v8",
+                        severity=c.get("worst_severity", "medium"), actor=actor,
+                        occurred_at=occurred_at, discovered_report=report_id,
+                        reason=f"{c['control_id']} at risk")
+        finding_ids.append(fid)
+        affected.append(c["control_id"])
+
+    # 5. assemble the linked-ID posture run (deterministic run id from its report)
+    m = dict(manifest or {})
+    run_id = run_id or ("run-" + hashlib.sha256(
+        f"{tenant}|{report_id}|{snapshot.get('collected_at', '')}".encode()).hexdigest()[:20])
+    run = {
+        "run_id": run_id, "tenant": tenant, "connector_id": connector_id,
+        "started_at": started, "completed_at": now_iso(), "status": "completed",
+        "collection": {
+            "manifest_sha256": m.get("resource_sha256"), "signed": bool(m.get("signature")),
+            "reconciled": bool(m.get("reconciled")),
+            "reconciliation_basis": m.get("reconciliation_basis"),
+            "expected_accounts": m.get("expected_accounts"),
+            "observed_accounts": m.get("observed_accounts"),
+        },
+        "snapshot": {
+            "source": snapshot.get("source"), "collected_at": snapshot.get("collected_at"),
+            "resource_count": len(snapshot.get("resources", [])),
+        },
+        "evidence": {"snapshot_sha256": ev_obj.sha256,
+                     "raw_uri": f"furix-evidence://{ev_obj.sha256}"},
+        "evaluation": {"assertion_total": len(cas), "pass": ev_pass, "fail": ev_fail,
+                       "evaluator_hash": evaluator_hash},
+        "report_id": report_id,
+        "verified": ing["verification"]["ok"],
+        "verifier_level": ing["verification"].get("level"),
+        "findings": finding_ids, "affected_controls": affected,
+    }
+    return PostureRunStore(store.root).save(run)
+
+
+def list_posture_runs(store: ReportStore, tenant: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    from compliance_reporting.posture_run import PostureRunStore  # noqa: PLC0415
+    return PostureRunStore(store.root).list(tenant, limit=limit)
+
+
+def get_posture_run(store: ReportStore, tenant: str, run_id: str) -> dict[str, Any]:
+    from compliance_reporting.posture_run import PostureRunStore  # noqa: PLC0415
+    run = PostureRunStore(store.root).get(tenant, run_id)
+    if run is None:
+        raise FileNotFoundError(f"unknown posture run {run_id}")
+    return run
 
 
 def split_log_lines(text: str) -> list[str]:
@@ -438,10 +544,13 @@ def get_audit_package(store: ReportStore, report_id: str = "latest",
     ar = build_assessment_results(report)
     poam = build_poam(report, findings)
     ar_val, poam_val = validate_oscal_schema(ar), validate_oscal_schema(poam)
-    # An auditor package must not be issued unless the OSCAL schema-validates.
-    if not (ar_val["ok"] and poam_val["ok"]):
-        raise IngestError(f"OSCAL package failed schema validation: "
-                          f"{ar_val['errors'] + poam_val['errors']}")
+    # An auditor package must not be issued unless schema validation actually RAN
+    # and passed. `ran=False` (e.g. jsonschema unavailable) is NOT good enough —
+    # an unvalidated "OSCAL export" is worse than none (fail-closed).
+    validated = bool(ar_val["ran"] and ar_val["ok"] and poam_val["ran"] and poam_val["ok"])
+    if not validated:
+        raise IngestError(f"OSCAL package not schema-validated (ran={ar_val['ran']}/"
+                          f"{poam_val['ran']}): {ar_val['errors'] + poam_val['errors']}")
     return {
         "report_id": report["report_id"],
         "generated_at": report.get("generated_at"),
@@ -451,7 +560,7 @@ def get_audit_package(store: ReportStore, report_id: str = "latest",
         "oscal": {
             "assessment_results": ar,
             "poam": poam,
-            "validation_ok": ar_val["ok"] and poam_val["ok"],
+            "validation_ok": validated,
             "schema": ar_val.get("schema"),
         },
         "findings": findings,

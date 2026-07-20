@@ -479,6 +479,55 @@ def run_connector(connector_id: str,
     return ConnectorScheduler(reg).run_one(tn, connector_id, runner, now=int(time.time()))
 
 
+# ── unified posture-run pipeline (Wave-H) ─────────────────────────────────────
+@app.post("/api/connectors/{connector_id}/posture-run", status_code=201)
+def connector_posture_run(connector_id: str,
+                          principal: Principal = Depends(require(SCOPE_INGEST, "posture_run"))):
+    """Run the full pipeline for a connector: collect → evidence → reconcile →
+    assertions → verified report → findings, recorded as one linked-ID run."""
+    if not principal.has(SCOPE_ADMIN):
+        raise HTTPException(status_code=403, detail="running a posture run requires admin authority")
+    secret = _connector_signing_secret()
+    if not secret:
+        raise HTTPException(status_code=400,
+                            detail="connector manifest signing secret not configured "
+                                   "(set FURIX_CONNECTOR_SIGNING_SECRET)")
+    tn = principal.tenant_id
+    reg = _connector_registry_for(tn)
+    job = reg.get(tn, connector_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"unknown connector {connector_id}")
+    store = _store_for(principal, None)
+    now = int(time.time())
+    try:
+        collected = service.collect_snapshot(tn, job["kind"], job.get("config", {}) or {}, secret)
+        run = service.run_posture(store, tenant=tn, snapshot=collected["snapshot"],
+                                  manifest=collected["manifest"], connector_id=connector_id,
+                                  occurred_at=service.now_iso(), actor=principal.key_id)
+        reg.record_run(tn, connector_id, now=now, manifest=collected["manifest"], error=None)
+        return run
+    except Exception as e:  # noqa: BLE001 - record the failure on the connector, surface 422
+        reg.record_run(tn, connector_id, now=now, manifest=None, error=str(e))
+        raise HTTPException(status_code=422, detail=f"posture run failed: {e}")
+
+
+@app.get("/api/posture-runs")
+def posture_runs(principal: Principal = Depends(require(SCOPE_READ, "list_posture_runs")),
+                 tenant: str | None = None):
+    tn = tenant or principal.tenant_id
+    _store_for(principal, tenant)  # enforce cross-tenant rules
+    return service.list_posture_runs(_stores.for_tenant(tn), tn)
+
+
+@app.get("/api/posture-runs/{run_id}")
+def posture_run(run_id: str,
+                principal: Principal = Depends(require(SCOPE_READ, "get_posture_run")),
+                tenant: str | None = None):
+    tn = tenant or principal.tenant_id
+    _store_for(principal, tenant)
+    return _handle(service.get_posture_run, _stores.for_tenant(tn), tn, run_id)
+
+
 # ── OSCAL + auditor workspace (Wave 5) ────────────────────────────────────────
 @app.get("/api/oscal")
 def oscal(principal: Principal = Depends(require(SCOPE_EXPORT, "oscal")),

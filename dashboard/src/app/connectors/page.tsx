@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, RefreshCw, Plug, Play, ShieldCheck, ShieldAlert, CircleHelp } from "lucide-react";
+import { Loader2, RefreshCw, Plug, Play, ShieldCheck, ShieldAlert, CircleHelp, GitBranch } from "lucide-react";
 import { DataModeBadge, type DataMode } from "@/components/compliance/data-mode-badge";
 import { apiHealthy } from "@/lib/data/client";
 import {
   getConnectors,
+  getPostureRuns,
   registerConnector,
   runConnector,
+  runPosture,
   type Connector,
+  type PostureRun,
 } from "@/lib/data/furix-api";
 
 // Connector health (Wave-G): scheduled collection connectors (e.g. the AWS
@@ -40,6 +43,7 @@ function fmt(iso?: string | null): string {
 
 export default function ConnectorsPage() {
   const [connectors, setConnectors] = useState<Connector[] | null>(null);
+  const [runs, setRuns] = useState<Record<string, PostureRun>>({});
   const [mode, setMode] = useState<DataMode>("loading");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -54,7 +58,15 @@ export default function ConnectorsPage() {
         setConnectors([]);
         return;
       }
-      setConnectors(await getConnectors());
+      const [cs, prs] = await Promise.all([getConnectors(), getPostureRuns()]);
+      setConnectors(cs);
+      // keep the latest posture run per connector
+      const byConn: Record<string, PostureRun> = {};
+      for (const r of prs) {
+        const k = r.connector_id ?? "";
+        if (k && !byConn[k]) byConn[k] = r;
+      }
+      setRuns(byConn);
       setMode("live");
     } catch (e) {
       setMode("demo");
@@ -87,6 +99,19 @@ export default function ConnectorsPage() {
     setError(null);
     try {
       await runConnector(id);
+      await load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onPostureRun(id: string) {
+    setBusy(`posture:${id}`);
+    setError(null);
+    try {
+      await runPosture(id);
       await load();
     } catch (e) {
       setError(String(e));
@@ -187,19 +212,34 @@ export default function ConnectorsPage() {
                     <HealthIcon health={c.health} /> {c.health}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onRun(c.connector_id)}
-                  disabled={busy !== null}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-[var(--furix-accent,#c2703d)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
-                >
-                  {busy === c.connector_id ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Play className="h-3.5 w-3.5" />
-                  )}
-                  Run now
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onRun(c.connector_id)}
+                    disabled={busy !== null}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium disabled:opacity-40 dark:border-slate-600"
+                  >
+                    {busy === c.connector_id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Play className="h-3.5 w-3.5" />
+                    )}
+                    Collect
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onPostureRun(c.connector_id)}
+                    disabled={busy !== null}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-[var(--furix-accent,#c2703d)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+                  >
+                    {busy === `posture:${c.connector_id}` ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <GitBranch className="h-3.5 w-3.5" />
+                    )}
+                    Run posture
+                  </button>
+                </div>
               </div>
 
               <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-xs sm:grid-cols-4">
@@ -234,6 +274,53 @@ export default function ConnectorsPage() {
                 <p className="mt-2 font-mono text-[11px] text-slate-400">
                   manifest sha256: {c.last_manifest_sha}
                 </p>
+              )}
+
+              {runs[c.connector_id] && (
+                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/40">
+                  <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    <GitBranch className="h-3.5 w-3.5" /> Latest posture run — linked chain
+                  </div>
+                  {(() => {
+                    const r = runs[c.connector_id];
+                    return (
+                      <dl className="grid grid-cols-2 gap-x-6 gap-y-1.5 font-mono text-[11px] sm:grid-cols-3">
+                        <div>
+                          <dt className="text-slate-400">run</dt>
+                          <dd className="truncate text-slate-700 dark:text-slate-200">{r.run_id}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-slate-400">snapshot evidence</dt>
+                          <dd className="truncate text-slate-700 dark:text-slate-200">
+                            {r.evidence.snapshot_sha256.slice(0, 16)}…
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-slate-400">assertions (pass/fail)</dt>
+                          <dd className="text-slate-700 dark:text-slate-200">
+                            {r.evaluation.pass}/{r.evaluation.fail}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-slate-400">report</dt>
+                          <dd className="truncate text-slate-700 dark:text-slate-200">
+                            {r.report_id} {r.verified ? "✓" : "✗"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-slate-400">findings</dt>
+                          <dd className="text-slate-700 dark:text-slate-200">{r.findings.length}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-slate-400">affected controls</dt>
+                          <dd className="truncate text-slate-700 dark:text-slate-200">
+                            {r.affected_controls.length}
+                          </dd>
+                        </div>
+                      </dl>
+                    );
+                  })()}
+                </div>
               )}
             </div>
           ))}

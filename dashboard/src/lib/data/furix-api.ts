@@ -222,3 +222,36 @@ export function registerConnector(
 export function runConnector(connectorId: string): Promise<Connector> {
   return apiPost<Connector>(`/api/connectors/${encodeURIComponent(connectorId)}/run`, {});
 }
+
+// ── unified posture-run pipeline (Wave-H) ────────────────────────────────────
+export type PostureRun = {
+  run_id: string;
+  tenant: string;
+  connector_id?: string | null;
+  completed_at?: string;
+  status: string;
+  collection: {
+    manifest_sha256?: string | null;
+    signed: boolean;
+    reconciled: boolean;
+    reconciliation_basis?: string | null;
+    expected_accounts?: number | null;
+    observed_accounts?: number | null;
+  };
+  snapshot: { source?: string; collected_at?: string; resource_count: number };
+  evidence: { snapshot_sha256: string; raw_uri: string };
+  evaluation: { assertion_total: number; pass: number; fail: number; evaluator_hash: string };
+  report_id: string;
+  verified: boolean;
+  verifier_level?: string;
+  findings: string[];
+  affected_controls: string[];
+};
+
+export function runPosture(connectorId: string): Promise<PostureRun> {
+  return apiPost<PostureRun>(`/api/connectors/${encodeURIComponent(connectorId)}/posture-run`, {});
+}
+
+export function getPostureRuns(): Promise<PostureRun[]> {
+  return apiGet<PostureRun[]>("/api/posture-runs");
+}
