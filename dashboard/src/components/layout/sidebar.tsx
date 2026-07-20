@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   FileInput,
   Plug,
+  FileCheck2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole } from "@/lib/rbac/context";
@@ -34,6 +35,7 @@ const NAV: Record<string, NavItem> = {
   ingest:    { label: "Ingest",       href: "/ingest",          icon: FileInput },
   connectors:{ label: "Connectors",   href: "/connectors",      icon: Plug },
   compliance:{ label: "Compliance",   href: "/compliance", icon: ShieldCheck },
+  audit:     { label: "Audit",        href: "/audit",           icon: FileCheck2 },
   alerts:    { label: "Alerts",       href: "/alerts",          icon: AlertTriangle },
   assets:    { label: "Assets",       href: "/assets",          icon: Database },
   risks:     { label: "Risks",        href: "/risk-scoring",    icon: Gauge },
@@ -48,10 +50,10 @@ const NAV: Record<string, NavItem> = {
 const ROLE_NAV: Record<RoleId, string[]> = {
   // Flow: Overview → Discovery → Scans → Ingest → Compliance → Assets → then
   // Risks / Alerts / SIEM / AI / Graph / Reports / Health / Settings
-  admin:   ["overview", "discovery", "scans", "ingest", "connectors", "compliance", "assets", "risks", "alerts", "siem", "ai", "graph", "reports", "health", "settings"],
-  analyst: ["overview",              "scans", "ingest", "connectors", "compliance", "assets", "risks", "alerts", "siem", "ai", "graph",            "health"],
-  auditor: ["overview",                       "ingest", "connectors", "compliance", "assets", "risks",                                  "reports"],
-  mssp:    ["overview", "discovery", "scans", "ingest", "connectors", "compliance", "assets", "risks", "alerts", "siem",               "reports", "health", "settings"],
+  admin:   ["overview", "discovery", "scans", "ingest", "connectors", "compliance", "audit", "assets", "risks", "alerts", "siem", "ai", "graph", "reports", "health", "settings"],
+  analyst: ["overview",              "scans", "ingest", "connectors", "compliance",          "assets", "risks", "alerts", "siem", "ai", "graph",            "health"],
+  auditor: ["overview",                       "ingest", "connectors", "compliance", "audit", "assets", "risks",                                  "reports"],
+  mssp:    ["overview", "discovery", "scans", "ingest", "connectors", "compliance", "audit", "assets", "risks", "alerts", "siem",               "reports", "health", "settings"],
 };
 
 /**

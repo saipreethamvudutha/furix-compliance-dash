@@ -337,3 +337,69 @@ export function updateControlProfile(
 ): Promise<ControlProfile> {
   return apiPut<ControlProfile>(`/api/compliance/controls/${encodeURIComponent(controlId)}`, patch);
 }
+
+// ── audit-period workflow (Wave-I / Epic 5) ──────────────────────────────────
+export type EvidenceRequest = {
+  req_id: string;
+  control_id: string;
+  note: string;
+  status: string;
+  requested_by: string;
+  requested_at: string;
+  evidence_ref: string | null;
+  fulfilled_by: string | null;
+  fulfilled_at: string | null;
+};
+
+export type AuditPeriod = {
+  period_id: string;
+  tenant: string;
+  name: string;
+  boundary: string;
+  start_date: string;
+  end_date: string;
+  status: "open" | "in_review" | "signed_off" | "reopened" | string;
+  frozen: boolean;
+  created_by: string;
+  created_at: string;
+  evidence_requests: EvidenceRequest[];
+  signoffs: Array<{ reviewer: string; at: string; snapshot_sha256: string; snapshot_uri: string }>;
+  reopenings: Array<{ by: string; at: string; reason: string }>;
+};
+
+export function listAuditPeriods(): Promise<AuditPeriod[]> {
+  return apiGet<AuditPeriod[]>("/api/audit-periods");
+}
+
+export function createAuditPeriod(body: {
+  name: string;
+  boundary: string;
+  start_date: string;
+  end_date: string;
+}): Promise<AuditPeriod> {
+  return apiPost<AuditPeriod>("/api/audit-periods", body);
+}
+
+export function addEvidenceRequest(
+  periodId: string,
+  controlId: string,
+  note: string,
+): Promise<AuditPeriod> {
+  return apiPost<AuditPeriod>(`/api/audit-periods/${encodeURIComponent(periodId)}/evidence-requests`, {
+    control_id: controlId,
+    note,
+  });
+}
+
+export function signoffAuditPeriod(periodId: string): Promise<AuditPeriod> {
+  return apiPost<AuditPeriod>(`/api/audit-periods/${encodeURIComponent(periodId)}/signoff`, {});
+}
+
+export function reopenAuditPeriod(periodId: string, reason: string): Promise<AuditPeriod> {
+  return apiPost<AuditPeriod>(`/api/audit-periods/${encodeURIComponent(periodId)}/reopen`, { reason });
+}
+
+/** Same-origin download URL for the auditor evidence ZIP (session cookie is sent). */
+export function auditPackageUrl(periodId: string): string {
+  return `${API_BASE}/api/audit-periods/${encodeURIComponent(periodId)}/package.zip`;
+}

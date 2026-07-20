@@ -336,6 +336,53 @@ def test_compliance_profile_validation_and_unknown_control():
     assert nf.status_code == 404
 
 
+# ── audit-period workflow (Wave-I / Epic 5) ───────────────────────────────────
+def test_audit_period_lifecycle_and_auditor_zip():
+    c, _ = _make_client()
+    # analyst cannot create a period (admin authority)
+    body = {"name": "Q3 CIS", "boundary": "prod AWS", "start_date": "2026-07-01",
+            "end_date": "2026-09-30"}
+    assert c.post("/api/audit-periods", json=body, headers=_H["analyst"]).status_code == 403
+    p = c.post("/api/audit-periods", json=body, headers=_H["admin"]).json()
+    pid = p["period_id"]
+    assert p["status"] == "open"
+
+    # evidence request
+    er = c.post(f"/api/audit-periods/{pid}/evidence-requests",
+                json={"control_id": "Control 6", "note": "MFA policy"}, headers=_H["admin"])
+    assert er.status_code == 201 and len(er.json()["evidence_requests"]) == 1
+
+    # analyst (no export scope) cannot sign off; auditor can
+    assert c.post(f"/api/audit-periods/{pid}/signoff", headers=_H["analyst"]).status_code == 403
+    signed = c.post(f"/api/audit-periods/{pid}/signoff", headers=_H["auditor"])
+    assert signed.status_code == 200 and signed.json()["frozen"] is True
+
+    # frozen → evidence requests refused (400)
+    assert c.post(f"/api/audit-periods/{pid}/evidence-requests",
+                  json={"control_id": "Control 1"}, headers=_H["admin"]).status_code == 400
+
+    # auditor-only ZIP download
+    assert c.get(f"/api/audit-periods/{pid}/package.zip", headers=_H["analyst"]).status_code == 403
+    z = c.get(f"/api/audit-periods/{pid}/package.zip", headers=_H["auditor"])
+    assert z.status_code == 200 and z.headers["content-type"] == "application/zip"
+    import io as _io
+    import zipfile as _zip
+    zf = _zip.ZipFile(_io.BytesIO(z.content))
+    assert "audit-manifest.json" in zf.namelist()
+
+    # reopen (admin) → editable again
+    re = c.post(f"/api/audit-periods/{pid}/reopen", json={"reason": "late evidence"},
+                headers=_H["admin"])
+    assert re.status_code == 200 and re.json()["status"] == "reopened"
+
+
+def test_audit_period_tenant_isolation():
+    c, _ = _make_client()
+    c.post("/api/audit-periods", json={"name": "x", "start_date": "2026-01-01",
+                                       "end_date": "2026-02-01"}, headers=_H["admin"])
+    assert c.get("/api/audit-periods", headers=_H["globex"]).json() == []
+
+
 # ── malformed input handling ──────────────────────────────────────────────────
 def test_malformed_requests_are_rejected_cleanly():
     c, _ = _make_client()

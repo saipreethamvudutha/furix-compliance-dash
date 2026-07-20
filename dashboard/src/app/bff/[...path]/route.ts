@@ -112,11 +112,13 @@ async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
   }
 
   const contentType = res.headers.get("content-type") ?? "application/json";
-  const bodyText = await res.text();
-  return new NextResponse(bodyText, {
-    status: res.status,
-    headers: { "content-type": contentType, "cache-control": "no-store" },
-  });
+  // Pass the body through as bytes so binary downloads (e.g. the audit ZIP) are
+  // not corrupted by a text() round-trip. Forward the download filename header.
+  const body = await res.arrayBuffer();
+  const headers: Record<string, string> = { "content-type": contentType, "cache-control": "no-store" };
+  const disposition = res.headers.get("content-disposition");
+  if (disposition) headers["content-disposition"] = disposition;
+  return new NextResponse(body, { status: res.status, headers });
 }
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {

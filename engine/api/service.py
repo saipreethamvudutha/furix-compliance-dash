@@ -309,6 +309,138 @@ def update_control_profile(store: ReportStore, tenant: str, control_id: str,
         raise ValueError(str(e))
 
 
+# ── audit-period workflow (Wave-I / Epic 5) ───────────────────────────────────
+def _audit_store(store: ReportStore):
+    from compliance_reporting.audit_period import AuditPeriodStore  # noqa: PLC0415
+    return AuditPeriodStore(store.root)
+
+
+def create_audit_period(store: ReportStore, tenant: str, *, name: str, boundary: str,
+                        start_date: str, end_date: str, actor: str, at: str) -> dict[str, Any]:
+    return _audit_store(store).create(tenant=tenant, name=name, boundary=boundary,
+                                      start_date=start_date, end_date=end_date,
+                                      created_by=actor, created_at=at)
+
+
+def list_audit_periods(store: ReportStore, tenant: str) -> list[dict[str, Any]]:
+    return _audit_store(store).list(tenant)
+
+
+def get_audit_period(store: ReportStore, tenant: str, period_id: str) -> dict[str, Any]:
+    p = _audit_store(store).get(tenant, period_id)
+    if p is None:
+        raise FileNotFoundError(f"unknown audit period {period_id}")
+    return p
+
+
+def add_evidence_request(store: ReportStore, tenant: str, period_id: str, *, control_id: str,
+                        note: str, actor: str, at: str) -> dict[str, Any]:
+    from compliance_reporting.audit_period import AuditPeriodError  # noqa: PLC0415
+    try:
+        return _audit_store(store).add_evidence_request(
+            tenant, period_id, control_id=control_id, note=note, requested_by=actor, requested_at=at)
+    except AuditPeriodError as e:
+        raise ValueError(str(e))
+
+
+def fulfill_evidence_request(store: ReportStore, tenant: str, period_id: str, req_id: str, *,
+                            evidence_ref: str, actor: str, at: str) -> dict[str, Any]:
+    from compliance_reporting.audit_period import AuditPeriodError  # noqa: PLC0415
+    try:
+        return _audit_store(store).fulfill_evidence_request(
+            tenant, period_id, req_id, evidence_ref=evidence_ref, actor=actor, at=at)
+    except AuditPeriodError as e:
+        raise ValueError(str(e))
+
+
+def _audit_snapshot_payload(store: ReportStore, tenant: str, period: dict[str, Any]) -> dict[str, Any]:
+    """The immutable content captured at sign-off: the full audit package +
+    control workspace, bound to the period."""
+    pkg = get_audit_package(store)  # raises IngestError if OSCAL doesn't validate
+    workspace = list_control_workspace(store, tenant)
+    return {
+        "period": {k: period[k] for k in ("period_id", "name", "boundary",
+                                          "start_date", "end_date")},
+        "audit_package": pkg,
+        "control_workspace": workspace,
+    }
+
+
+def sign_off_audit_period(store: ReportStore, tenant: str, period_id: str, *,
+                          reviewer: str, at: str) -> dict[str, Any]:
+    """Freeze the period with an IMMUTABLE, content-addressed signed snapshot."""
+    from compliance_reporting.audit_period import AuditPeriodError  # noqa: PLC0415
+    from compliance_reporting.evidence import EvidenceStore  # noqa: PLC0415
+    period = get_audit_period(store, tenant, period_id)
+    try:
+        payload = _audit_snapshot_payload(store, tenant, period)
+    except IngestError as e:
+        raise ValueError(f"cannot sign off: {e}")
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    ev = EvidenceStore(store.root)
+    obj = ev.put(raw, source="audit-snapshot", tenant=tenant)
+    if not ev.verify_object(obj.sha256):
+        raise ValueError("audit snapshot failed persistence verification")
+    try:
+        return _audit_store(store).record_signoff(
+            tenant, period_id, reviewer=reviewer, at=at,
+            snapshot_sha256=obj.sha256, snapshot_uri=f"furix-evidence://{obj.sha256}")
+    except AuditPeriodError as e:
+        raise ValueError(str(e))
+
+
+def reopen_audit_period(store: ReportStore, tenant: str, period_id: str, *,
+                        actor: str, at: str, reason: str) -> dict[str, Any]:
+    from compliance_reporting.audit_period import AuditPeriodError  # noqa: PLC0415
+    try:
+        return _audit_store(store).record_reopen(tenant, period_id, actor=actor, at=at, reason=reason)
+    except AuditPeriodError as e:
+        raise ValueError(str(e))
+
+
+def build_audit_zip(store: ReportStore, tenant: str, period_id: str) -> bytes:
+    """A downloadable ZIP of the audit package. For a SIGNED-OFF period the ZIP is
+    reconstructed from the IMMUTABLE signed snapshot (so it can never drift);
+    otherwise it is built from the live current state."""
+    import io  # noqa: PLC0415
+    import zipfile  # noqa: PLC0415
+
+    from compliance_reporting.evidence import EvidenceStore  # noqa: PLC0415
+    period = get_audit_period(store, tenant, period_id)
+
+    if period["signoffs"]:
+        sha = period["signoffs"][-1]["snapshot_sha256"]
+        payload = json.loads(EvidenceStore(store.root).get_raw(sha).decode("utf-8"))
+        source = "signed-snapshot"
+    else:
+        payload = _audit_snapshot_payload(store, tenant, period)
+        source = "live"
+
+    pkg = payload["audit_package"]
+    oscal = pkg.get("oscal", {})
+    manifest = {
+        "period": payload["period"], "status": period["status"], "frozen": period["frozen"],
+        "signoffs": period["signoffs"], "reopenings": period["reopenings"],
+        "evidence_requests": period["evidence_requests"],
+        "report_id": pkg.get("report_id"),
+        "report_integrity_sha256": pkg.get("integrity_sha256"),
+        "oscal_validation_ok": oscal.get("validation_ok"),
+        "package_source": source,
+    }
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("audit-manifest.json", json.dumps(manifest, indent=2, sort_keys=True))
+        zf.writestr("report-summary.json", json.dumps(pkg.get("summary", {}), indent=2, sort_keys=True))
+        zf.writestr("oscal-assessment-results.json",
+                    json.dumps(oscal.get("assessment_results", {}), indent=2, sort_keys=True))
+        zf.writestr("oscal-poam.json", json.dumps(oscal.get("poam", {}), indent=2, sort_keys=True))
+        zf.writestr("findings.json", json.dumps(pkg.get("findings", []), indent=2, sort_keys=True))
+        zf.writestr("control-workspace.json",
+                    json.dumps(payload.get("control_workspace", []), indent=2, sort_keys=True))
+    return buf.getvalue()
+
+
 def list_posture_runs(store: ReportStore, tenant: str, *, limit: int = 50) -> list[dict[str, Any]]:
     from compliance_reporting.posture_run import PostureRunStore  # noqa: PLC0415
     return PostureRunStore(store.root).list(tenant, limit=limit)

@@ -53,6 +53,7 @@ MODULES = [
     "api.test_secrets_env",
     "api.test_posture_run",
     "api.test_compliance_workspace",
+    "api.test_audit_period",
     "api.test_integration",
 ]
 

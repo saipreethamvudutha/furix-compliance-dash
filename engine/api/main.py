@@ -23,7 +23,7 @@ from threading import Lock
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from compliance_reporting.render_html import render_html_report
@@ -611,6 +611,123 @@ def posture_run(run_id: str,
     tn = tenant or principal.tenant_id
     _store_for(principal, tenant)
     return _handle(service.get_posture_run, _stores.for_tenant(tn), tn, run_id)
+
+
+# ── audit-period workflow (Wave-I / Epic 5) ───────────────────────────────────
+class AuditPeriodBody(BaseModel):
+    name: str
+    boundary: str = ""
+    start_date: str
+    end_date: str
+
+
+class EvidenceRequestBody(BaseModel):
+    control_id: str
+    note: str = ""
+
+
+class FulfillBody(BaseModel):
+    evidence_ref: str
+
+
+class ReopenBody(BaseModel):
+    reason: str = ""
+
+
+@app.post("/api/audit-periods", status_code=201)
+def create_audit_period(body: AuditPeriodBody,
+                        principal: Principal = Depends(require(SCOPE_INGEST, "create_audit_period"))):
+    if not principal.has(SCOPE_ADMIN):
+        raise HTTPException(status_code=403, detail="creating an audit period requires admin authority")
+    store = _store_for(principal, None)
+    return service.create_audit_period(store, principal.tenant_id, name=body.name,
+                                       boundary=body.boundary, start_date=body.start_date,
+                                       end_date=body.end_date, actor=principal.key_id,
+                                       at=service.now_iso())
+
+
+@app.get("/api/audit-periods")
+def list_audit_periods(principal: Principal = Depends(require(SCOPE_READ, "list_audit_periods")),
+                       tenant: str | None = None):
+    store = _store_for(principal, tenant)
+    return service.list_audit_periods(store, tenant or principal.tenant_id)
+
+
+@app.get("/api/audit-periods/{period_id}")
+def get_audit_period(period_id: str,
+                     principal: Principal = Depends(require(SCOPE_READ, "get_audit_period")),
+                     tenant: str | None = None):
+    store = _store_for(principal, tenant)
+    return _handle(service.get_audit_period, store, tenant or principal.tenant_id, period_id)
+
+
+@app.post("/api/audit-periods/{period_id}/evidence-requests", status_code=201)
+def add_evidence_request(period_id: str, body: EvidenceRequestBody,
+                         principal: Principal = Depends(require(SCOPE_INGEST, "add_evidence_request"))):
+    store = _store_for(principal, None)
+    try:
+        return service.add_evidence_request(store, principal.tenant_id, period_id,
+                                            control_id=body.control_id, note=body.note,
+                                            actor=principal.key_id, at=service.now_iso())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/audit-periods/{period_id}/evidence-requests/{req_id}/fulfill")
+def fulfill_evidence_request(period_id: str, req_id: str, body: FulfillBody,
+                             principal: Principal = Depends(require(SCOPE_INGEST, "fulfill_evidence_request"))):
+    store = _store_for(principal, None)
+    try:
+        return service.fulfill_evidence_request(store, principal.tenant_id, period_id, req_id,
+                                                evidence_ref=body.evidence_ref,
+                                                actor=principal.key_id, at=service.now_iso())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/audit-periods/{period_id}/signoff")
+def signoff_audit_period(period_id: str,
+                         principal: Principal = Depends(require(SCOPE_EXPORT, "signoff_audit_period"))):
+    # Sign-off (freeze) is a reviewer act — the export scope (auditor/admin).
+    store = _store_for(principal, None)
+    try:
+        return service.sign_off_audit_period(store, principal.tenant_id, period_id,
+                                             reviewer=principal.key_id, at=service.now_iso())
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/audit-periods/{period_id}/reopen")
+def reopen_audit_period(period_id: str, body: ReopenBody,
+                        principal: Principal = Depends(require(SCOPE_INGEST, "reopen_audit_period"))):
+    if not principal.has(SCOPE_ADMIN):
+        raise HTTPException(status_code=403, detail="reopening a frozen period requires admin authority")
+    store = _store_for(principal, None)
+    try:
+        return service.reopen_audit_period(store, principal.tenant_id, period_id,
+                                           actor=principal.key_id, at=service.now_iso(),
+                                           reason=body.reason)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/audit-periods/{period_id}/package.zip")
+def download_audit_package(period_id: str,
+                           principal: Principal = Depends(require(SCOPE_EXPORT, "download_audit_package"))):
+    # Auditor-only (export scope): the self-contained, downloadable evidence ZIP.
+    store = _store_for(principal, None)
+    try:
+        data = service.build_audit_zip(store, principal.tenant_id, period_id)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except (ValueError, service.IngestError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return Response(content=data, media_type="application/zip",
+                    headers={"content-disposition": f'attachment; filename="audit-{period_id}.zip"'})
 
 
 # ── compliance workspace (Wave-I / Epic 4) ────────────────────────────────────
