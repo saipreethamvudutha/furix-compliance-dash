@@ -1,0 +1,19 @@
+# Pinned test/runtime dependencies for the Furix engine (Wave-F).
+#
+# CI installs exactly this set so the FastAPI integration suite, the API auth
+# stack, HTTPX TestClient transport, JSON-Schema OSCAL validation, evidence
+# encryption, and JWT auth all actually RUN (with FURIX_TEST_STRICT=1 a missing
+# dep fails the build instead of silently skipping the coverage).
+#
+#     pip install -r test-requirements.txt
+#     FURIX_TEST_STRICT=1 python run_all_tests.py
+
+fastapi==0.139.2
+starlette==1.3.1
+httpx==0.27.2
+anyio==4.14.2
+jsonschema==4.26.0
+python-multipart==0.0.32
+cryptography==49.0.0
+PyJWT==2.13.0
+uvicorn==0.51.0

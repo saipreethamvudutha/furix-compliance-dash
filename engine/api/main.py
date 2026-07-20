@@ -29,7 +29,10 @@ from pydantic import BaseModel
 from compliance_reporting.render_html import render_html_report
 from compliance_reporting.settings import Settings
 
+from compliance_reporting.attestation_store import AttestationError, AttestationStore
+
 from . import service
+from .attest_keys import attestation_keyring_for
 from .auth import (
     AuthError, AuthRegistry, ForbiddenError, Principal,
     SCOPE_ADMIN, SCOPE_EXPORT, SCOPE_INGEST, SCOPE_READ,
@@ -46,6 +49,27 @@ _settings = Settings.from_env()
 _auth = AuthRegistry.from_env()
 _stores = TenantStores(_settings.store_path)
 _jobs = JobManager()
+
+# per-tenant attestation submission/approval stores (Wave-F), cached
+_attest_stores: dict[str, AttestationStore] = {}
+_attest_lock = Lock()
+
+
+def _attest_store_for(tenant: str) -> AttestationStore:
+    with _attest_lock:
+        s = _attest_stores.get(tenant)
+        if s is None:
+            s = AttestationStore(_stores.for_tenant(tenant).root)
+            _attest_stores[tenant] = s
+        return s
+
+
+def _approved_attestations(tenant: str):
+    """(attestations, keyring) for a tenant — only APPROVED, verified with the
+    tenant key ring, so reports built during ingest can positively pass the
+    people/process controls from human evidence."""
+    ring = attestation_keyring_for(tenant)
+    return _attest_store_for(tenant).approved_attestations(tenant), ring
 
 # Hardening knobs (env-overridable)
 _MAX_BODY_BYTES = int(os.environ.get("FURIX_MAX_BODY_BYTES", str(50 * 1024 * 1024)))  # 50 MB
@@ -174,8 +198,10 @@ def ingest(body: IngestBody, principal: Principal = Depends(require(SCOPE_INGEST
         raise HTTPException(status_code=413, detail="log payload too large")
     store = _store_for(principal, None)
     text, lt, tn = body.text, body.log_type, principal.tenant_id
+    atts, ring = _approved_attestations(tn)
     job_id = _jobs.submit(
         lambda progress: service.ingest_batch(store, text, log_type=lt, tenant=tn,
+                                              attestations=atts, attestation_keyring=ring,
                                               on_progress=progress),
         owner=principal.key_id,
     )
@@ -205,8 +231,10 @@ async def ingest_file(file: UploadFile,
         raise HTTPException(status_code=413, detail="file too large")
     store = _store_for(principal, None)
     tn = principal.tenant_id
+    atts, ring = _approved_attestations(tn)
     job_id = _jobs.submit(
         lambda progress: service.ingest_batch(store, raw, log_type=log_type, tenant=tn,
+                                              attestations=atts, attestation_keyring=ring,
                                               on_progress=progress),
         owner=principal.key_id,
     )
@@ -309,6 +337,68 @@ def transition_finding(finding_id: str, body: TransitionBody,
     return _handle(service.transition_finding, store, finding_id, body.action,
                    actor=principal.key_id, occurred_at=body.occurred_at,
                    reason=body.reason, payload=body.payload)
+
+
+# ── attestation submission / approval (Wave-F) ────────────────────────────────
+class AttestationBody(BaseModel):
+    attestation: dict = {}
+    as_of: str | None = None
+
+
+class AttestationDecisionBody(BaseModel):
+    decided_at: str
+    reason: str = ""
+
+
+@app.get("/api/attestations")
+def list_attestations(principal: Principal = Depends(require(SCOPE_READ, "list_attestations")),
+                      tenant: str | None = None, status: str | None = None):
+    target = _store_for(principal, tenant)  # enforces cross-tenant rules
+    del target
+    tn = tenant or principal.tenant_id
+    return _attest_store_for(tn).list(tn, status=status)
+
+
+@app.post("/api/attestations", status_code=201)
+def submit_attestation(body: AttestationBody,
+                       principal: Principal = Depends(require(SCOPE_INGEST, "submit_attestation"))):
+    tn = principal.tenant_id
+    ring = attestation_keyring_for(tn)
+    try:
+        return _attest_store_for(tn).submit(
+            body.attestation, tenant=tn, keyring=ring, submitted_by=principal.key_id,
+            submitted_at=service.now_iso(), as_of=body.as_of)
+    except AttestationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/attestations/{att_id}/approve")
+def approve_attestation(att_id: str, body: AttestationDecisionBody,
+                        principal: Principal = Depends(require(SCOPE_INGEST, "approve_attestation"))):
+    # Approval is an authority act (segregation of duty) — require admin.
+    if not principal.has(SCOPE_ADMIN):
+        raise HTTPException(status_code=403, detail="attestation approval requires admin authority")
+    tn = principal.tenant_id
+    try:
+        return _attest_store_for(tn).approve(
+            att_id, tenant=tn, approved_by=principal.key_id, decided_at=body.decided_at,
+            reason=body.reason)
+    except AttestationError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/attestations/{att_id}/reject")
+def reject_attestation(att_id: str, body: AttestationDecisionBody,
+                       principal: Principal = Depends(require(SCOPE_INGEST, "reject_attestation"))):
+    if not principal.has(SCOPE_ADMIN):
+        raise HTTPException(status_code=403, detail="attestation rejection requires admin authority")
+    tn = principal.tenant_id
+    try:
+        return _attest_store_for(tn).reject(
+            att_id, tenant=tn, rejected_by=principal.key_id, decided_at=body.decided_at,
+            reason=body.reason)
+    except AttestationError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # ── OSCAL + auditor workspace (Wave 5) ────────────────────────────────────────

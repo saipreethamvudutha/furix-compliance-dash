@@ -292,26 +292,38 @@ def demo_config_snapshot() -> dict[str, Any]:
     }
 
 
-def demo_attestations() -> list[dict[str, Any]]:
-    """Recent, in-cadence attestations for the people/process controls (Wave-E),
-    so Controls 9/14/15/17/18 can positively pass via signed human evidence."""
-    return [
-        {"spec_id": "MAN-EMAIL-BROWSER", "attester": "it-lead@acme",
-         "statement": "DNS filtering + safe-attachment enforced", "evidence_ref": "TICKET-9021",
-         "attested_at": "2026-06-01T00:00:00+00:00"},
-        {"spec_id": "MAN-SEC-TRAINING", "attester": "hr@acme",
-         "statement": "100% completed annual training", "evidence_ref": "LMS-2026",
-         "attested_at": "2026-05-15T00:00:00+00:00"},
-        {"spec_id": "MAN-VENDOR-REVIEW", "attester": "grc@acme",
-         "statement": "All critical vendors reviewed Q2", "evidence_ref": "VRM-2026-Q2",
-         "attested_at": "2026-06-20T00:00:00+00:00"},
-        {"spec_id": "MAN-INCIDENT-EXERCISE", "attester": "soc-lead@acme",
-         "statement": "Tabletop exercise conducted", "evidence_ref": "IR-EX-2026",
-         "attested_at": "2026-04-10T00:00:00+00:00"},
-        {"spec_id": "MAN-PENTEST", "attester": "ciso@acme",
-         "statement": "External pentest completed, findings remediated", "evidence_ref": "PT-2026",
-         "attested_at": "2026-03-01T00:00:00+00:00"},
+_DEMO_ATTEST_SECRET = "furix-demo-attest-secret"
+_DEMO_ATTEST_KEY_ID = "furix-demo-key"
+
+
+def demo_attestation_keyring():
+    """The signing key ring the demo attestations are signed with."""
+    from .attestation import AttestationKeyRing
+    return AttestationKeyRing({_DEMO_ATTEST_KEY_ID: _DEMO_ATTEST_SECRET})
+
+
+def demo_attestations(tenant: str = "default") -> list[dict[str, Any]]:
+    """Recent, in-cadence, SIGNED attestations for the people/process controls,
+    so Controls 9/14/15/17/18 can positively pass via verified human evidence.
+    Verification is mandatory — use demo_attestation_keyring() to evaluate."""
+    from .attestation import make_attestation
+    ring = demo_attestation_keyring()
+    raw = [
+        ("MAN-EMAIL-BROWSER", "it-lead@acme", "DNS filtering + safe-attachment enforced",
+         "TICKET-9021", "2026-06-01T00:00:00+00:00"),
+        ("MAN-SEC-TRAINING", "hr@acme", "100% completed annual training",
+         "LMS-2026", "2026-05-15T00:00:00+00:00"),
+        ("MAN-VENDOR-REVIEW", "grc@acme", "All critical vendors reviewed Q2",
+         "VRM-2026-Q2", "2026-06-20T00:00:00+00:00"),
+        ("MAN-INCIDENT-EXERCISE", "soc-lead@acme", "Tabletop exercise conducted",
+         "IR-EX-2026", "2026-04-10T00:00:00+00:00"),
+        ("MAN-PENTEST", "ciso@acme", "External pentest completed, findings remediated",
+         "PT-2026", "2026-03-01T00:00:00+00:00"),
     ]
+    return [make_attestation(spec_id=s, attester=a, statement=st, evidence_ref=e,
+                             attested_at=t, tenant=tenant, scope="prod",
+                             key_id=_DEMO_ATTEST_KEY_ID, keyring=ring)
+            for (s, a, st, e, t) in raw]
 
 
 def demo_config_snapshot_with_gap() -> dict[str, Any]:

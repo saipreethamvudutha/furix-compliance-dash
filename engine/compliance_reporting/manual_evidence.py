@@ -105,15 +105,21 @@ def evaluate_manual(attestations: list[Mapping[str, Any]] | None,
     results: list[dict[str, Any]] = []
     for spec in MANUAL_ASSERTION_CATALOG.values():
         att = by_spec.get(spec.spec_id)
-        # strict verification when a keyring is provided (Wave-N)
+        # Signature verification is MANDATORY (fail-closed): an attestation can
+        # only PASS when a keyring is available AND it verifies. Without a
+        # keyring, attestations are unverifiable and can never PASS.
         verification_status = None
         verification_reasons: list[str] = []
-        if att is not None and keyring is not None:
-            from .attestation import verify_attestation  # local import
-            verification_status, verification_reasons = verify_attestation(
-                att, keyring, tenant=tenant, as_of=as_of)
-            if verification_status != "verified":
-                att = None   # an invalid attestation cannot back a PASS
+        if att is not None:
+            if keyring is None:
+                verification_status, verification_reasons = "invalid", ["no_verification_keyring"]
+                att = None
+            else:
+                from .attestation import verify_attestation  # local import
+                verification_status, verification_reasons = verify_attestation(
+                    att, keyring, tenant=tenant, as_of=as_of)
+                if verification_status != "verified":
+                    att = None   # an invalid attestation cannot back a PASS
 
         if not att:
             status = MANUAL_PENDING

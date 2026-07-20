@@ -13,6 +13,7 @@
 // not change when that lands.
 
 import { NextRequest, NextResponse } from "next/server";
+import { isProd, prodReadiness } from "@/lib/bff/env";
 import { openSession, readCsrfCookie, readSessionCookie } from "@/lib/bff/session";
 import { bffAllows, mintUserToken } from "@/lib/bff/token";
 
@@ -20,9 +21,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Server-only configuration — NOT prefixed NEXT_PUBLIC, so it is never bundled
-// into client JavaScript.
+// into client JavaScript. The static key is a DEV convenience only; in
+// production per-user token minting is mandatory (see the bearer resolution
+// below) and this fallback is never used.
 const API_URL = (process.env.FURIX_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
-const API_KEY = process.env.FURIX_API_KEY ?? "furix-dev-key";
+const DEV_API_KEY = process.env.FURIX_API_KEY ?? "furix-dev-key";
 
 function unauth(detail: string, status = 401): NextResponse {
   return NextResponse.json({ detail }, { status });
@@ -31,6 +34,17 @@ function unauth(detail: string, status = 401): NextResponse {
 async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
   const apiPath = path.join("/");
   const isHealth = apiPath.replace(/^api\//, "").startsWith("health");
+
+  // ── fail-closed production readiness (Wave-F) ─────────────────────────────
+  // If production is misconfigured (missing session/mint secret, no identity
+  // source), refuse to proxy rather than serving with insecure defaults.
+  const readiness = prodReadiness();
+  if (!readiness.ok) {
+    return NextResponse.json(
+      { detail: "BFF is not configured for production", issues: readiness.issues },
+      { status: 503 },
+    );
+  }
 
   // ── server-side session gate (Wave-N #1) ──────────────────────────────────
   const cookieHeader = req.headers.get("cookie");
@@ -51,13 +65,24 @@ async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
     }
   }
 
-  // Per-user token when minting is configured, else the static server key.
-  const bearer = (session && mintUserToken(session)) || API_KEY;
+  // Bearer resolution. Prefer a short-lived per-user minted token so the API
+  // authenticates and tenant-scopes per user. In production minting is
+  // mandatory: there is NO static-key fallback — a request that cannot mint
+  // fails closed (503). The static dev key is used ONLY outside production.
+  const minted = session ? mintUserToken(session) : null;
+  let bearer: string | null = minted;
+  if (!bearer && !isProd()) {
+    bearer = DEV_API_KEY; // dev convenience only
+  }
+  if (!isHealth && !bearer) {
+    return unauth("server misconfigured: per-user token minting unavailable", 503);
+  }
+
   const target = `${API_URL}/${apiPath}${req.nextUrl.search}`;
   const init: RequestInit = {
     method: req.method,
     headers: {
-      authorization: `Bearer ${bearer}`,
+      ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
       // forward the authenticated identity for the API's audit log
       ...(session ? { "x-furix-actor": session.sub, "x-furix-role": session.role } : {}),
       ...(req.headers.get("content-type")

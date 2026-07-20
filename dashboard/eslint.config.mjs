@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Node-runner tests (run via `node --test`, not part of the Next build).
+    // They use explicit .ts import specifiers which the app tsconfig disallows.
+    "**/*.test.ts",
   ]),
 ]);
 

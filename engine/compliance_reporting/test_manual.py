@@ -9,7 +9,13 @@ Manual / operational evidence assertions for the people/process controls
 
 from __future__ import annotations
 
-from .fixtures import demo_attestations, demo_batch, demo_config_snapshot
+from .attestation import make_attestation
+from .fixtures import (
+    demo_attestation_keyring,
+    demo_attestations,
+    demo_batch,
+    demo_config_snapshot,
+)
 from .manual_evidence import (
     MANUAL_ASSERTION_CATALOG,
     MANUAL_CONTROLS,
@@ -35,23 +41,41 @@ def test_no_attestation_is_manual_pending_not_pass():
 
 
 def test_current_attestation_passes():
-    results = {r["spec_id"]: r for r in evaluate_manual(demo_attestations(), as_of=_GEN)}
+    ring = demo_attestation_keyring()
+    results = {r["spec_id"]: r
+               for r in evaluate_manual(demo_attestations(), as_of=_GEN, keyring=ring)}
     assert all(r["status"] == "pass" for r in results.values())
     ev = results["MAN-PENTEST"]["evidence"][0]
     assert ev["attester"] == "ciso@acme" and ev["raw_uri"].startswith("furix-attestation://")
+    assert ev["verification_status"] == "verified"
+
+
+def test_unsigned_attestation_never_passes_fail_closed():
+    # Fail-closed: an in-cadence attestation with NO keyring is unverifiable →
+    # manual_pending, never pass. Signature verification is mandatory.
+    results = {r["spec_id"]: r for r in evaluate_manual(demo_attestations(), as_of=_GEN)}
+    for r in results.values():
+        assert r["status"] == "manual_pending"
+        assert r["verification"]["status"] == "invalid"
+        assert "no_verification_keyring" in r["verification"]["reasons"]
 
 
 def test_stale_attestation_is_not_pass():
-    # attested 2 years before as_of, cadence 365d → stale
-    old = [{"spec_id": "MAN-PENTEST", "attester": "x", "statement": "s",
-            "evidence_ref": "e", "attested_at": "2024-01-01T00:00:00+00:00"}]
-    r = {x["spec_id"]: x for x in evaluate_manual(old, as_of=_GEN)}["MAN-PENTEST"]
+    ring = demo_attestation_keyring()
+    # signed but attested 2 years before as_of, cadence 365d → stale
+    old = [make_attestation(spec_id="MAN-PENTEST", attester="x", statement="s",
+                            evidence_ref="e", attested_at="2024-01-01T00:00:00+00:00",
+                            tenant="default", scope="prod",
+                            key_id="furix-demo-key", keyring=ring)]
+    r = {x["spec_id"]: x
+         for x in evaluate_manual(old, as_of=_GEN, keyring=ring)}["MAN-PENTEST"]
     assert r["status"] == "stale"
 
 
 def test_manual_pass_makes_control_compliant_in_report():
     r = build_report(demo_batch(), registry=_REG, generated_at=_GEN,
-                     config_snapshot=demo_config_snapshot(), attestations=demo_attestations())
+                     config_snapshot=demo_config_snapshot(), attestations=demo_attestations(),
+                     attestation_keyring=demo_attestation_keyring())
     by_id = {c["control_id"]: c for c in r["controls"]}
     # people/process controls with a current attestation go compliant …
     for cid in ("Control 9", "Control 14", "Control 17", "Control 18"):
@@ -68,6 +92,18 @@ def test_missing_attestations_keep_controls_pending_never_compliant():
     by_id = {c["control_id"]: c for c in r["controls"]}
     for cid in ("Control 9", "Control 14", "Control 15", "Control 17", "Control 18"):
         assert by_id[cid]["status"] != "compliant"
+    assert verify_report(r, demo_batch()).ok
+
+
+def test_report_without_keyring_keeps_manual_controls_pending():
+    # Fail-closed at the report level: attestations present but no verification
+    # keyring → the people/process controls can never become compliant.
+    r = build_report(demo_batch(), registry=_REG, generated_at=_GEN,
+                     config_snapshot=demo_config_snapshot(),
+                     attestations=demo_attestations())  # no attestation_keyring
+    by_id = {c["control_id"]: c for c in r["controls"]}
+    for cid in ("Control 9", "Control 14", "Control 17", "Control 18"):
+        assert by_id[cid]["status"] != "compliant", (cid, by_id[cid]["status"])
     assert verify_report(r, demo_batch()).ok
 
 

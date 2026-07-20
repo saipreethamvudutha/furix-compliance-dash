@@ -9,6 +9,7 @@
 // FURIX_BFF_USERS (JSON: [{email, passHash, role, tenant}]).
 
 import crypto from "node:crypto";
+import { isProd } from "./env";
 
 export type BffUser = { email: string; passHash: string; role: string; tenant: string };
 
@@ -31,10 +32,14 @@ function users(): BffUser[] {
     try {
       return JSON.parse(raw) as BffUser[];
     } catch {
-      /* fall through to defaults */
+      // In production a malformed directory must NOT silently fall back to the
+      // built-in demo users — it fails closed (no users → no logins).
+      if (isProd()) return [];
     }
   }
-  return DEFAULT_USERS;
+  // Default demo users are dev-only. In production the directory is empty unless
+  // FURIX_BFF_USERS (or OIDC) is configured — no well-known credentials ship.
+  return isProd() ? [] : DEFAULT_USERS;
 }
 
 export function authenticateUser(email: string, password: string): BffUser | null {

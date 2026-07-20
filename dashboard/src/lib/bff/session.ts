@@ -6,6 +6,7 @@
 // no external dependency.
 
 import crypto from "node:crypto";
+import { isProd } from "./env";
 
 const COOKIE_NAME = "furix_session";
 const CSRF_COOKIE = "furix_csrf";
@@ -20,9 +21,17 @@ export type SessionData = {
   exp: number;
 };
 
-// Server-only secret. In production this MUST be set (32+ random bytes).
+// Server-only secret. In production this MUST be set — no dev fallback. A
+// missing secret in production throws (fail-closed) rather than sealing sessions
+// with a well-known key anyone could forge.
 function secretKey(): Buffer {
-  const s = process.env.FURIX_SESSION_SECRET ?? "dev-session-secret-change-me-in-prod";
+  const s = process.env.FURIX_SESSION_SECRET;
+  if (!s) {
+    if (isProd()) {
+      throw new Error("FURIX_SESSION_SECRET is required in production (fail-closed)");
+    }
+    return crypto.createHash("sha256").update("dev-session-secret-change-me-in-prod").digest();
+  }
   return crypto.createHash("sha256").update(s).digest(); // 32 bytes for AES-256
 }
 

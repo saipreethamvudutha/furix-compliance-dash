@@ -134,6 +134,66 @@ def test_oscal_export_is_schema_validated():
     assert pkg["oscal"]["validation_ok"] is True
 
 
+# ── attestation submission / approval (Wave-F) ────────────────────────────────
+def _demo_att(tenant="acme"):
+    from compliance_reporting.attestation import make_attestation
+    from compliance_reporting.fixtures import demo_attestation_keyring
+    return make_attestation(spec_id="MAN-PENTEST", attester="ciso@acme",
+                            statement="pentest done", evidence_ref="PT-2026",
+                            attested_at="2026-03-01T00:00:00+00:00", tenant=tenant,
+                            scope="prod", key_id="furix-demo-key",
+                            keyring=demo_attestation_keyring())
+
+
+def test_attestation_submit_requires_ingest_scope():
+    c, _ = _make_client()
+    body = {"attestation": _demo_att(), "as_of": "2026-07-19T12:00:00+00:00"}
+    # auditor lacks ingest scope
+    assert c.post("/api/attestations", json=body, headers=_H["auditor"]).status_code == 403
+    # analyst may submit
+    r = c.post("/api/attestations", json=body, headers=_H["analyst"])
+    assert r.status_code == 201, r.text
+    assert r.json()["status"] == "submitted"
+
+
+def test_attestation_submit_rejects_unverifiable():
+    c, _ = _make_client()
+    bad = _demo_att()
+    bad["signature"] = "deadbeef"
+    r = c.post("/api/attestations", json={"attestation": bad, "as_of": "2026-07-19T12:00:00+00:00"},
+               headers=_H["analyst"])
+    assert r.status_code == 400
+
+
+def test_attestation_approval_requires_admin_and_gates_availability():
+    c, _ = _make_client()
+    body = {"attestation": _demo_att(), "as_of": "2026-07-19T12:00:00+00:00"}
+    sub = c.post("/api/attestations", json=body, headers=_H["analyst"]).json()
+    att_id = sub["att_id"]
+    dec = {"decided_at": "2026-07-19T13:00:00+00:00", "reason": "reviewed"}
+    # analyst cannot approve (not admin)
+    assert c.post(f"/api/attestations/{att_id}/approve", json=dec,
+                  headers=_H["analyst"]).status_code == 403
+    # before approval it is not in the approved list
+    listed = c.get("/api/attestations?status=approved", headers=_H["auditor"]).json()
+    assert listed == []
+    # admin approves
+    assert c.post(f"/api/attestations/{att_id}/approve", json=dec,
+                  headers=_H["admin"]).status_code == 200
+    approved = c.get("/api/attestations?status=approved", headers=_H["auditor"]).json()
+    assert len(approved) == 1 and approved[0]["status"] == "approved"
+
+
+def test_attestation_tenant_isolation():
+    c, _ = _make_client()
+    body = {"attestation": _demo_att("acme"), "as_of": "2026-07-19T12:00:00+00:00"}
+    sub = c.post("/api/attestations", json=body, headers=_H["analyst"]).json()
+    c.post(f"/api/attestations/{sub['att_id']}/approve",
+           json={"decided_at": "2026-07-19T13:00:00+00:00"}, headers=_H["admin"])
+    # globex admin sees NONE of acme's attestations
+    assert c.get("/api/attestations", headers=_H["globex"]).json() == []
+
+
 # ── malformed input handling ──────────────────────────────────────────────────
 def test_malformed_requests_are_rejected_cleanly():
     c, _ = _make_client()

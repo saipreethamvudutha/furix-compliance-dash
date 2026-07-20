@@ -10,6 +10,7 @@ is a thin shell over these functions.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Sequence
 
 from compliance_reporting.adapters.dashboard import report_to_frameworks, report_to_summary
@@ -25,6 +26,11 @@ Analyzer = Callable[[str, str], Mapping[str, Any]]
 
 class IngestError(RuntimeError):
     """Raised when an ingested batch fails independent verification."""
+
+
+def now_iso() -> str:
+    """Server-side UTC timestamp (ISO-8601) for audit records."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def split_log_lines(text: str) -> list[str]:
@@ -76,6 +82,7 @@ def ingest_batch(
     tenant: str = "default",
     config_snapshot: Any = None,
     attestations: Any = None,
+    attestation_keyring: Any = None,
     analyzer: Analyzer | None = None,
     registry: FrameworkRegistry | None = None,
     deliver: bool = True,
@@ -126,7 +133,8 @@ def ingest_batch(
     if on_progress:
         on_progress(total, total, "finalizing")
     report = build_report(results, registry=registry, config_snapshot=config_snapshot,
-                          attestations=attestations)
+                          attestations=attestations, attestation_keyring=attestation_keyring,
+                          tenant=tenant)
     verification = verify_report(report, results)
     if not verification.ok:
         raise IngestError(f"report failed verification: {verification.failures}")
@@ -179,15 +187,18 @@ def generate_and_ingest(
     """
     from log_generator.generate import generate  # noqa: PLC0415
 
-    snapshot = attests = None
+    snapshot = attests = ring = None
     if with_config:
-        from compliance_reporting.fixtures import demo_attestations, demo_config_snapshot  # noqa: PLC0415
+        from compliance_reporting.fixtures import (  # noqa: PLC0415
+            demo_attestation_keyring, demo_attestations, demo_config_snapshot)
         snapshot = demo_config_snapshot()
-        attests = demo_attestations()
+        attests = demo_attestations(tenant=tenant)   # signed for this tenant
+        ring = demo_attestation_keyring()
 
     lines = generate(count=count, attack_ratio=attack_ratio, types=types, seed=seed)
     return ingest_batch(store, "\n".join(lines), log_type="auto", tenant=tenant,
-                        config_snapshot=snapshot, attestations=attests, analyzer=analyzer,
+                        config_snapshot=snapshot, attestations=attests,
+                        attestation_keyring=ring, analyzer=analyzer,
                         registry=registry, on_progress=on_progress)
 
 
