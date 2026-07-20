@@ -66,16 +66,23 @@ def collect_snapshot(tenant: str, kind: str, cfg: Mapping[str, Any],
     return collector.collect(collected_at=now_iso())
 
 
-def make_connector_runner(tenant: str, signing_secret: str) -> Callable[[Mapping[str, Any]], dict]:
-    """Build a runner(job)->manifest for the ConnectorScheduler. Dispatches on
-    the job 'kind': 'demo-aws' (deterministic, no creds) or 'aws-org-iam' (the
-    live boto3 collector). Manifests are mandatory-signed (fail-closed)."""
-
-    def runner(job: Mapping[str, Any]) -> dict:
-        out = collect_snapshot(tenant, job["kind"], job.get("config", {}) or {}, signing_secret)
-        return out["manifest"]
-
-    return runner
+def run_connector_posture(store: ReportStore, tenant: str, connector_id: str, *, kind: str,
+                          config: Mapping[str, Any], signing_secret: str,
+                          registry: FrameworkRegistry | None = None, attestations: Any = None,
+                          attestation_keyring: Any = None, actor: str = "scheduler") -> dict[str, Any]:
+    """
+    The one path a connector run should take (Wave-J P0): collect → run the FULL
+    unified posture pipeline (evaluate controls, verify, findings) → return the
+    posture run + manifest. Used by BOTH the manual /run endpoint and the async
+    worker, so a scheduled run evaluates controls exactly like a manual one.
+    """
+    collected = collect_snapshot(tenant, kind, config, signing_secret)
+    run = run_posture(store, tenant=tenant, snapshot=collected["snapshot"],
+                      manifest=collected["manifest"], connector_id=connector_id,
+                      registry=registry, occurred_at=now_iso(), actor=actor,
+                      data_mode="demo" if is_demo_kind(kind) else "live",
+                      attestations=attestations, attestation_keyring=attestation_keyring)
+    return {"run": run, "manifest": collected["manifest"]}
 
 
 DEMO_CONNECTOR_KINDS = frozenset({"demo-aws"})
@@ -89,7 +96,8 @@ def run_posture(store: ReportStore, *, tenant: str, snapshot: Mapping[str, Any],
                 manifest: Mapping[str, Any] | None = None, connector_id: str | None = None,
                 registry: FrameworkRegistry | None = None, occurred_at: str,
                 actor: str = "system", run_id: str | None = None,
-                data_mode: str = "live") -> dict[str, Any]:
+                data_mode: str = "live", attestations: Any = None,
+                attestation_keyring: Any = None) -> dict[str, Any]:
     """
     The unified posture-run pipeline (Wave-H): raw snapshot → immutable evidence
     → reconciliation (from the signed manifest) → config assertions → verified
@@ -114,8 +122,11 @@ def run_posture(store: ReportStore, *, tenant: str, snapshot: Mapping[str, Any],
     if not ev.verify_object(ev_obj.sha256):
         raise IngestError("posture snapshot evidence failed persistence verification")
 
-    # 2. ingest config → assertions + verified, stored report (persists per-resource evidence)
-    ing = ingest_config(store, snapshot, tenant=tenant, registry=registry)
+    # 2. ingest config → assertions + verified, stored report (persists per-resource
+    #    evidence). Approved attestations flow through so verified manual controls
+    #    are preserved, not regressed to pending (Wave-J P0).
+    ing = ingest_config(store, snapshot, tenant=tenant, registry=registry,
+                        attestations=attestations, attestation_keyring=attestation_keyring)
     report_id = ing["report_id"]
     report = store.load(report_id)
 
@@ -353,38 +364,114 @@ def fulfill_evidence_request(store: ReportStore, tenant: str, period_id: str, re
         raise ValueError(str(e))
 
 
-def _audit_snapshot_payload(store: ReportStore, tenant: str, period: dict[str, Any]) -> dict[str, Any]:
-    """The immutable content captured at sign-off: the full audit package +
-    control workspace, bound to the period."""
-    pkg = get_audit_package(store)  # raises IngestError if OSCAL doesn't validate
+def _date_of(iso: str) -> str:
+    return (iso or "")[:10]
+
+
+def _report_in_window(store: ReportStore, start_date: str, end_date: str) -> str | None:
+    """The latest report whose generated_at date falls within [start, end]."""
+    in_window = [e for e in store.entries()
+                 if start_date <= _date_of(e.generated_at) <= end_date]
+    if not in_window:
+        return None
+    return max(in_window, key=lambda e: e.generated_at).report_id
+
+
+def _verify_evidence_ref(store: ReportStore, ref: str) -> bool:
+    """An evidence reference must be a furix-evidence://<sha256> that actually
+    resolves to a retained, verifiable object — no arbitrary/dangling refs."""
+    from compliance_reporting.evidence import EvidenceStore  # noqa: PLC0415
+    prefix = "furix-evidence://"
+    if not isinstance(ref, str) or not ref.startswith(prefix):
+        return False
+    sha = ref[len(prefix):]
+    if len(sha) != 64:
+        return False
+    try:
+        return EvidenceStore(store.root).verify_object(sha)
+    except (OSError, ValueError):
+        return False
+
+
+def _audit_snapshot_payload(store: ReportStore, tenant: str, period: dict[str, Any],
+                            report_id: str) -> dict[str, Any]:
+    """The immutable content captured at sign-off: the audit package for the
+    PERIOD'S report + the control workspace, bound to the period."""
+    pkg = get_audit_package(store, report_id)  # raises IngestError if OSCAL doesn't validate
     workspace = list_control_workspace(store, tenant)
     return {
         "period": {k: period[k] for k in ("period_id", "name", "boundary",
                                           "start_date", "end_date")},
+        "report_id": report_id,
+        "evidence_requests": period["evidence_requests"],
         "audit_package": pkg,
         "control_workspace": workspace,
     }
 
 
 def sign_off_audit_period(store: ReportStore, tenant: str, period_id: str, *,
-                          reviewer: str, at: str) -> dict[str, Any]:
-    """Freeze the period with an IMMUTABLE, content-addressed signed snapshot."""
+                          reviewer: str, at: str, signer: Any = None,
+                          require_signature: bool = False) -> dict[str, Any]:
+    """
+    Freeze the period with an IMMUTABLE, PERIOD-SCOPED, cryptographically-signed
+    snapshot (Wave-J P1). Enforced before freezing:
+
+    * every evidence request must be fulfilled, and each fulfilled reference must
+      resolve to a retained, verifiable evidence object,
+    * a report must exist WITHIN the period's date window (the snapshot binds to
+      that report, not just "the latest"),
+    * the snapshot is written to the write-once evidence store, and — when a
+      signer is configured — asymmetrically signed (verifiable by public key).
+    """
     from compliance_reporting.audit_period import AuditPeriodError  # noqa: PLC0415
     from compliance_reporting.evidence import EvidenceStore  # noqa: PLC0415
     period = get_audit_period(store, tenant, period_id)
+
+    # 1. all evidence requests fulfilled + their references verifiable
+    for req in period["evidence_requests"]:
+        if req["status"] != "provided":
+            raise ValueError(
+                f"evidence request {req['req_id']} for {req['control_id']} is not fulfilled — "
+                "all evidence requests must be provided before sign-off")
+        if not _verify_evidence_ref(store, req.get("evidence_ref")):
+            raise ValueError(
+                f"evidence request {req['req_id']} references an unverifiable evidence object "
+                f"({req.get('evidence_ref')!r}) — it must be a retained furix-evidence:// object")
+
+    # 2. a report within the period window binds the snapshot
+    report_id = _report_in_window(store, period["start_date"], period["end_date"])
+    if report_id is None:
+        raise ValueError(
+            f"no assessment within the audit period window "
+            f"[{period['start_date']} .. {period['end_date']}] — run a posture assessment first")
+
     try:
-        payload = _audit_snapshot_payload(store, tenant, period)
+        payload = _audit_snapshot_payload(store, tenant, period, report_id)
     except IngestError as e:
         raise ValueError(f"cannot sign off: {e}")
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ev = EvidenceStore(store.root)
     obj = ev.put(raw, source="audit-snapshot", tenant=tenant)
     if not ev.verify_object(obj.sha256):
         raise ValueError("audit snapshot failed persistence verification")
+
+    # 3. cryptographically sign the snapshot digest
+    signature = None
+    if signer is not None:
+        signature = {
+            "algorithm": signer.algorithm,
+            "signature": signer.sign(obj.sha256.encode()),
+            "public_key_pem": signer.public_key_pem(),
+            "signed": obj.sha256,
+        }
+    elif require_signature:
+        raise ValueError("audit sign-off requires a configured signing key in production")
+
     try:
         return _audit_store(store).record_signoff(
-            tenant, period_id, reviewer=reviewer, at=at,
-            snapshot_sha256=obj.sha256, snapshot_uri=f"furix-evidence://{obj.sha256}")
+            tenant, period_id, reviewer=reviewer, at=at, report_id=report_id,
+            snapshot_sha256=obj.sha256, snapshot_uri=f"furix-evidence://{obj.sha256}",
+            signature=signature)
     except AuditPeriodError as e:
         raise ValueError(str(e))
 
@@ -413,7 +500,9 @@ def build_audit_zip(store: ReportStore, tenant: str, period_id: str) -> bytes:
         payload = json.loads(EvidenceStore(store.root).get_raw(sha).decode("utf-8"))
         source = "signed-snapshot"
     else:
-        payload = _audit_snapshot_payload(store, tenant, period)
+        report_id = (_report_in_window(store, period["start_date"], period["end_date"])
+                     or "latest")
+        payload = _audit_snapshot_payload(store, tenant, period, report_id)
         source = "live"
 
     pkg = payload["audit_package"]
@@ -630,11 +719,17 @@ def ingest_config(
     tenant: str = "default",
     registry: FrameworkRegistry | None = None,
     deliver: bool = True,
+    attestations: Any = None,
+    attestation_keyring: Any = None,
 ) -> dict[str, Any]:
     """
     Ingest a config-posture snapshot (FUR-CMP-009). Combines it with the most
     recent detection batch (if any) so posture reflects both event evidence and
     config state, then builds + verifies + persists a report.
+
+    Approved manual attestations (+ the tenant key ring) are threaded into the
+    report build so a config/connector run NEVER regresses verified people/process
+    controls back to pending (Wave-J P0).
     """
     registry = registry or FrameworkRegistry.from_live()
     prior = store.latest(1)
@@ -659,7 +754,9 @@ def ingest_config(
         except (OSError, IngestError) as e:
             raise IngestError(f"config evidence could not be persisted ({r.resource_id}): {e}") from e
 
-    report = build_report(batch or [], registry=registry, config_snapshot=snap)
+    report = build_report(batch or [], registry=registry, config_snapshot=snap,
+                          attestations=attestations, attestation_keyring=attestation_keyring,
+                          tenant=tenant)
     verification = verify_report(report, batch or [])
     if not verification.ok:
         raise IngestError(f"config report failed verification: {verification.failures}")

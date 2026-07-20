@@ -147,14 +147,17 @@ class AuditPeriodStore:
         return self._mutate(tenant, period_id, _fn)
 
     def record_signoff(self, tenant: str, period_id: str, *, reviewer: str, at: str,
-                       snapshot_sha256: str, snapshot_uri: str) -> dict[str, Any]:
-        """Freeze the period with an immutable signed snapshot reference."""
+                       snapshot_sha256: str, snapshot_uri: str, report_id: str | None = None,
+                       signature: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Freeze the period with an immutable, period-scoped, (optionally
+        asymmetrically-)signed snapshot reference."""
         def _fn(period):
             if period["status"] not in _EDITABLE_STATES:
                 raise AuditPeriodError(f"cannot sign off a period in state {period['status']!r}")
             period["signoffs"].append({
                 "reviewer": reviewer, "at": at,
                 "snapshot_sha256": snapshot_sha256, "snapshot_uri": snapshot_uri,
+                "report_id": report_id, "signature": signature,
             })
             period["status"] = SIGNED_OFF
             period["frozen"] = True

@@ -60,6 +60,27 @@ test("production is ready with secrets + a user directory", () => {
   assert.deepEqual(r, { ok: true, issues: [] });
 });
 
+test("production is ready when secrets are provided as Docker-secret FILES", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "furix-secretfiles-"));
+  const sess = path.join(dir, "session");
+  const mint = path.join(dir, "mint");
+  const users = path.join(dir, "users");
+  fs.writeFileSync(sess, "x".repeat(40) + "\n");
+  fs.writeFileSync(mint, "mint-secret\n");
+  fs.writeFileSync(users, "[]\n");
+  try {
+    const r = prodReadiness({
+      FURIX_ENV: "production",
+      FURIX_SESSION_SECRET_FILE: sess, // only the *_FILE variants set
+      FURIX_BFF_MINT_SECRET_FILE: mint,
+      FURIX_BFF_USERS_FILE: users,
+    });
+    assert.deepEqual(r, { ok: true, issues: [] }); // must be READY (was 503 before the fix)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("production accepts OIDC as the identity source instead of a user list", () => {
   const r = prodReadiness({
     FURIX_ENV: "production",

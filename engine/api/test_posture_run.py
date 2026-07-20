@@ -53,6 +53,31 @@ def test_posture_run_links_every_stage():
     assert run["data_mode"] in ("demo", "live")
 
 
+def test_posture_run_preserves_approved_manual_attestations():
+    """Wave-J P0: a connector/posture run must NOT regress verified people/process
+    controls (from approved manual attestations) back to manual_pending."""
+    from compliance_reporting.fixtures import demo_attestation_keyring, demo_attestations
+    store = _store()
+    out = _collect()
+    atts = demo_attestations(tenant="acme")     # signed, "approved" set for the tenant
+    ring = demo_attestation_keyring()
+
+    # WITH the approved attestations threaded through → manual controls compliant
+    run = service.run_posture(store, tenant="acme", snapshot=out["snapshot"],
+                              manifest=out["manifest"], registry=_REG, occurred_at=_NOW,
+                              attestations=atts, attestation_keyring=ring)
+    by_id = {c["control_id"]: c for c in store.load(run["report_id"])["controls"]}
+    for cid in ("Control 9", "Control 14", "Control 17", "Control 18"):
+        assert by_id[cid]["status"] == "compliant", (cid, by_id[cid]["status"])
+
+    # WITHOUT them (the old bug) → the same controls regress to manual_pending
+    store2 = _store()
+    run2 = service.run_posture(store2, tenant="acme", snapshot=out["snapshot"],
+                               manifest=out["manifest"], registry=_REG, occurred_at=_NOW)
+    by_id2 = {c["control_id"]: c for c in store2.load(run2["report_id"])["controls"]}
+    assert by_id2["Control 9"]["status"] != "compliant"
+
+
 def test_demo_data_mode_isolates_synthetic_runs():
     store = _store()
     out = _collect()

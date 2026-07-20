@@ -31,7 +31,7 @@ from compliance_reporting.settings import Settings
 
 from compliance_reporting.admin_audit import AdminAuditLog
 from compliance_reporting.attestation_store import AttestationError, AttestationStore
-from compliance_reporting.connector_registry import ConnectorRegistry, ConnectorScheduler
+from compliance_reporting.connector_registry import ConnectorRegistry
 from compliance_reporting.scim import ScimError, ScimUserStore
 from compliance_reporting.work_queue import WorkQueue
 
@@ -125,6 +125,32 @@ def _registry():
         from compliance_reporting.registry import FrameworkRegistry  # noqa: PLC0415
         _registry_cache.append(FrameworkRegistry.from_live())
     return _registry_cache[0]
+
+
+def _audit_signer():
+    """Resolve the asymmetric signer for audit snapshots (Wave-J P1). Prefers an
+    explicit PEM (or KMS) key; in development, persists a generated key so
+    signatures are always real and later-verifiable; in production, returns None
+    when unconfigured so sign-off fails closed."""
+    from compliance_reporting.signing import LocalRsaSigner  # noqa: PLC0415
+    pem = read_secret("FURIX_AUDIT_SIGNING_KEY_PEM")
+    if pem:
+        return LocalRsaSigner(pem)
+    kms_key = os.environ.get("FURIX_AUDIT_KMS_KEY_ID")
+    if kms_key:
+        import boto3  # noqa: PLC0415
+        from compliance_reporting.signing import KmsSigner  # noqa: PLC0415
+        return KmsSigner(kms_key, boto3.client("kms"))
+    if _is_production():
+        return None  # fail-closed: require_signature will reject
+    # development: persist a generated signing key alongside the store
+    key_path = _stores.root.parent / "audit-signing-key.pem"
+    if key_path.exists():
+        return LocalRsaSigner(key_path.read_text(encoding="utf-8"))
+    signer = LocalRsaSigner.generate()
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    key_path.write_text(signer.private_key_pem(), encoding="utf-8")
+    return signer
 
 
 def _reject_demo_in_prod(kind: str) -> None:
@@ -328,8 +354,19 @@ def ingest(body: IngestBody, principal: Principal = Depends(require(SCOPE_INGEST
     return {"job_id": job_id}
 
 
+def _is_production() -> bool:
+    return os.environ.get("FURIX_ENV", "development").lower() == "production"
+
+
 @app.post("/api/generate", status_code=202)
 def generate(body: GenerateBody, principal: Principal = Depends(require(SCOPE_INGEST, "generate"))):
+    # Synthetic log + demo config/attestation generation must NEVER write into a
+    # real tenant's report history in production (Wave-J P0).
+    if _is_production():
+        raise HTTPException(
+            status_code=403,
+            detail="synthetic data generation (/api/generate) is disabled in production — "
+                   "it writes demo config + attestations into the tenant's real report history")
     store = _store_for(principal, None)
     c, ar, sd, tn = max(0, body.count), body.attack_ratio, body.seed, principal.tenant_id
     job_id = _jobs.submit(
@@ -368,7 +405,9 @@ def ingest_config(body: ConfigBody,
     if not body.snapshot or not body.snapshot.get("resources"):
         raise HTTPException(status_code=400, detail="snapshot has no resources")
     store = _store_for(principal, None)
-    return _handle(service.ingest_config, store, body.snapshot, tenant=principal.tenant_id)
+    atts, ring = _approved_attestations(principal.tenant_id)
+    return _handle(service.ingest_config, store, body.snapshot, tenant=principal.tenant_id,
+                   attestations=atts, attestation_keyring=ring)
 
 
 @app.get("/api/jobs/{job_id}")
@@ -585,8 +624,26 @@ def run_connector(connector_id: str,
     if job is None:
         raise HTTPException(status_code=404, detail=f"unknown connector {connector_id}")
     _reject_demo_in_prod(job["kind"])
-    runner = service.make_connector_runner(tn, secret)
-    return ConnectorScheduler(reg).run_one(tn, connector_id, runner, now=int(time.time()))
+    store = _store_for(principal, None)
+    now = int(time.time())
+    atts, ring = _approved_attestations(tn)
+    # A connector run executes the FULL unified posture pipeline (evaluates
+    # controls, verifies, opens findings) — not a manifest-only collection
+    # (Wave-J P0). Health is recorded from the signed manifest.
+    try:
+        out = service.run_connector_posture(
+            store, tn, connector_id, kind=job["kind"], config=job.get("config", {}) or {},
+            signing_secret=secret, registry=_registry(), attestations=atts,
+            attestation_keyring=ring, actor=principal.key_id)
+        reg.record_run(tn, connector_id, now=now, manifest=out["manifest"], error=None)
+        _record_admin(principal, "connector.run", target=connector_id,
+                      details={"report_id": out["run"]["report_id"]})
+    except Exception as e:  # noqa: BLE001
+        reg.record_run(tn, connector_id, now=now, manifest=None, error=str(e))
+        _record_admin(principal, "connector.run", target=connector_id, outcome="error",
+                      details={"error": str(e)[:200]})
+        raise HTTPException(status_code=422, detail=f"connector run failed: {e}")
+    return next(c for c in reg.list(tn, now=now) if c["connector_id"] == connector_id)
 
 
 # ── unified posture-run pipeline (Wave-H) ─────────────────────────────────────
@@ -611,12 +668,13 @@ def connector_posture_run(connector_id: str,
     store = _store_for(principal, None)
     now = int(time.time())
     data_mode = "demo" if service.is_demo_kind(job["kind"]) else "live"
+    atts, ring = _approved_attestations(tn)
     try:
         collected = service.collect_snapshot(tn, job["kind"], job.get("config", {}) or {}, secret)
         run = service.run_posture(store, tenant=tn, snapshot=collected["snapshot"],
                                   manifest=collected["manifest"], connector_id=connector_id,
                                   occurred_at=service.now_iso(), actor=principal.key_id,
-                                  data_mode=data_mode)
+                                  data_mode=data_mode, attestations=atts, attestation_keyring=ring)
         reg.record_run(tn, connector_id, now=now, manifest=collected["manifest"], error=None)
         _record_admin(principal, "connector.posture_run", target=connector_id,
                       details={"report_id": run["report_id"], "run_id": run["run_id"],
@@ -726,10 +784,13 @@ def signoff_audit_period(period_id: str,
     # Sign-off (freeze) is a reviewer act — the export scope (auditor/admin).
     store = _store_for(principal, None)
     try:
-        result = service.sign_off_audit_period(store, principal.tenant_id, period_id,
-                                               reviewer=principal.key_id, at=service.now_iso())
+        result = service.sign_off_audit_period(
+            store, principal.tenant_id, period_id, reviewer=principal.key_id,
+            at=service.now_iso(), signer=_audit_signer(), require_signature=_is_production())
+        so = result["signoffs"][-1]
         _record_admin(principal, "audit_period.signoff", target=period_id,
-                      details={"snapshot_sha256": result["signoffs"][-1]["snapshot_sha256"]})
+                      details={"snapshot_sha256": so["snapshot_sha256"], "report_id": so["report_id"],
+                               "signed": bool(so.get("signature"))})
         return result
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

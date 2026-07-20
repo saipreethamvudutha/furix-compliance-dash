@@ -94,6 +94,28 @@ services:
       retries: 10
     restart: unless-stopped
 
+  worker:
+    build: ../engine
+    # The posture worker (Wave-J): drives every scheduled connector run through
+    # the unified posture pipeline via the durable queue. Shares the api's env +
+    # report store volume.
+    command: ["python", "-m", "api.worker"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      FURIX_ENV: ${FURIX_ENV:-development}
+      FURIX_REPORT_STORE: /data/reports
+      FURIX_CONNECTOR_SIGNING_SECRET: ${FURIX_CONNECTOR_SIGNING_SECRET:-furix-dev-connector-secret}
+      FURIX_WORKER_INTERVAL: ${FURIX_WORKER_INTERVAL:-30}
+      FURIX_DISABLE_RAG: ${FURIX_DISABLE_RAG:-1}
+      FURIX_ATTACK_PIVOT: ${FURIX_ATTACK_PIVOT:-1}
+    volumes:
+      - furix_reports:/data/reports
+      - furix_output:/data/output
+      - hf_models:/models
+    restart: unless-stopped
+
   web:
     build:
       context: ../dashboard

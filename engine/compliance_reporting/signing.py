@@ -66,6 +66,12 @@ class LocalRsaSigner:
             serialization.PublicFormat.SubjectPublicKeyInfo,
         ).decode()
 
+    def private_key_pem(self) -> str:
+        from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+        return self._key.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption()).decode()
+
     @staticmethod
     def generate() -> "LocalRsaSigner":
         """Generate a fresh RSA key (dev/test)."""

@@ -292,6 +292,16 @@ def test_demo_connectors_blocked_in_production():
         os.environ["FURIX_ENV"] = "development"
 
 
+def test_generate_synthetic_data_blocked_in_production():
+    c, _ = _make_client()
+    os.environ["FURIX_ENV"] = "production"
+    try:
+        r = c.post("/api/generate", json={"count": 5}, headers=_H["admin"])
+        assert r.status_code == 403 and "disabled in production" in r.json()["detail"]
+    finally:
+        os.environ["FURIX_ENV"] = "development"
+
+
 def test_posture_run_records_data_mode():
     c, _ = _make_client()
     c.post("/api/connectors", json={"connector_id": "pr-dm", "kind": "demo-aws"}, headers=_H["admin"])
@@ -339,23 +349,39 @@ def test_compliance_profile_validation_and_unknown_control():
 # ── audit-period workflow (Wave-I / Epic 5) ───────────────────────────────────
 def test_audit_period_lifecycle_and_auditor_zip():
     c, _ = _make_client()
+    # a real posture run so there is a report + retained evidence in the window
+    c.post("/api/connectors", json={"connector_id": "ap-conn", "kind": "demo-aws"}, headers=_H["admin"])
+    run = c.post("/api/connectors/ap-conn/posture-run", headers=_H["admin"]).json()
+    evidence_ref = run["evidence"]["raw_uri"]
+
     # analyst cannot create a period (admin authority)
-    body = {"name": "Q3 CIS", "boundary": "prod AWS", "start_date": "2026-07-01",
-            "end_date": "2026-09-30"}
+    body = {"name": "2026 CIS", "boundary": "prod AWS", "start_date": "2026-01-01",
+            "end_date": "2026-12-31"}
     assert c.post("/api/audit-periods", json=body, headers=_H["analyst"]).status_code == 403
     p = c.post("/api/audit-periods", json=body, headers=_H["admin"]).json()
     pid = p["period_id"]
     assert p["status"] == "open"
 
-    # evidence request
+    # evidence request …
     er = c.post(f"/api/audit-periods/{pid}/evidence-requests",
                 json={"control_id": "Control 6", "note": "MFA policy"}, headers=_H["admin"])
-    assert er.status_code == 201 and len(er.json()["evidence_requests"]) == 1
+    assert er.status_code == 201
+    req_id = er.json()["evidence_requests"][0]["req_id"]
+
+    # … sign-off is REFUSED while the request is outstanding (Wave-J P1)
+    assert c.post(f"/api/audit-periods/{pid}/signoff", headers=_H["auditor"]).status_code == 400
+
+    # fulfil it with a real, retained evidence reference
+    c.post(f"/api/audit-periods/{pid}/evidence-requests/{req_id}/fulfill",
+           json={"evidence_ref": evidence_ref}, headers=_H["admin"])
 
     # analyst (no export scope) cannot sign off; auditor can
     assert c.post(f"/api/audit-periods/{pid}/signoff", headers=_H["analyst"]).status_code == 403
     signed = c.post(f"/api/audit-periods/{pid}/signoff", headers=_H["auditor"])
     assert signed.status_code == 200 and signed.json()["frozen"] is True
+    # the snapshot is period-scoped (bound to a report) and cryptographically signed
+    so = signed.json()["signoffs"][-1]
+    assert so["report_id"] and so["signature"] and so["signature"]["algorithm"]
 
     # frozen → evidence requests refused (400)
     assert c.post(f"/api/audit-periods/{pid}/evidence-requests",

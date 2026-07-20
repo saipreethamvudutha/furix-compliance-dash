@@ -33,10 +33,17 @@ def _seeded_store():
     return store
 
 
-def _period(store):
-    return service.create_audit_period(store, "acme", name="Q3 2026 CIS",
-                                       boundary="prod AWS · CIS v8", start_date="2026-07-01",
-                                       end_date="2026-09-30", actor="admin", at=_NOW)
+def _period(store, *, start="2026-01-01", end="2026-12-31"):
+    return service.create_audit_period(store, "acme", name="2026 CIS",
+                                       boundary="prod AWS · CIS v8", start_date=start,
+                                       end_date=end, actor="admin", at=_NOW)
+
+
+def _valid_evidence_ref(store):
+    """A real, retained evidence object ref (the latest posture run's snapshot)."""
+    from compliance_reporting.posture_run import PostureRunStore
+    pr = PostureRunStore(store.root).latest("acme")
+    return "furix-evidence://" + pr["evidence"]["snapshot_sha256"]
 
 
 # ── lifecycle ─────────────────────────────────────────────────────────────────
@@ -93,6 +100,82 @@ def test_reopen_requires_signed_off():
         raise AssertionError("reopened a non-frozen period")
     except ValueError:
         pass
+
+
+# ── Wave-J P1: period-scoped, verified, signed sign-off ───────────────────────
+def test_signoff_requires_all_evidence_requests_fulfilled():
+    store = _seeded_store()
+    p = _period(store)
+    p = service.add_evidence_request(store, "acme", p["period_id"], control_id="Control 6",
+                                     note="MFA policy", actor="auditor", at=_NOW)
+    try:
+        service.sign_off_audit_period(store, "acme", p["period_id"], reviewer="ciso", at=_NOW)
+        raise AssertionError("signed off with an outstanding evidence request")
+    except ValueError as e:
+        assert "not fulfilled" in str(e)
+
+
+def test_signoff_rejects_unverifiable_evidence_reference():
+    store = _seeded_store()
+    p = _period(store)
+    p = service.add_evidence_request(store, "acme", p["period_id"], control_id="Control 6",
+                                     note="x", actor="auditor", at=_NOW)
+    req_id = p["evidence_requests"][0]["req_id"]
+    # a fabricated / dangling reference must be rejected
+    service.fulfill_evidence_request(store, "acme", p["period_id"], req_id,
+                                     evidence_ref="furix-evidence://" + "0" * 64, actor="g", at=_NOW)
+    try:
+        service.sign_off_audit_period(store, "acme", p["period_id"], reviewer="ciso", at=_NOW)
+        raise AssertionError("signed off with an unverifiable evidence reference")
+    except ValueError as e:
+        assert "unverifiable" in str(e)
+
+
+def test_signoff_with_fulfilled_verifiable_evidence_succeeds():
+    store = _seeded_store()
+    p = _period(store)
+    p = service.add_evidence_request(store, "acme", p["period_id"], control_id="Control 6",
+                                     note="x", actor="auditor", at=_NOW)
+    req_id = p["evidence_requests"][0]["req_id"]
+    service.fulfill_evidence_request(store, "acme", p["period_id"], req_id,
+                                     evidence_ref=_valid_evidence_ref(store), actor="g", at=_NOW)
+    signed = service.sign_off_audit_period(store, "acme", p["period_id"], reviewer="ciso", at=_NOW)
+    assert signed["frozen"] is True and signed["signoffs"][0]["report_id"]
+
+
+def test_signoff_rejects_when_no_report_in_period_window():
+    store = _seeded_store()  # report generated in 2026
+    p = _period(store, start="2020-01-01", end="2020-12-31")  # window with no assessment
+    try:
+        service.sign_off_audit_period(store, "acme", p["period_id"], reviewer="ciso", at=_NOW)
+        raise AssertionError("signed off with no report in the period window")
+    except ValueError as e:
+        assert "no assessment within" in str(e)
+
+
+def test_signoff_snapshot_is_cryptographically_signed():
+    from compliance_reporting.signing import LocalRsaSigner, verify_signature
+    store = _seeded_store()
+    p = _period(store)
+    signer = LocalRsaSigner.generate()
+    signed = service.sign_off_audit_period(store, "acme", p["period_id"], reviewer="ciso",
+                                           at=_NOW, signer=signer)
+    sig = signed["signoffs"][0]["signature"]
+    assert sig and sig["algorithm"] == "RSASSA_PSS_SHA_256"
+    sha = signed["signoffs"][0]["snapshot_sha256"]
+    # verifiable with the PUBLIC key alone (no secret)
+    assert verify_signature(sha.encode(), sig["signature"], sig["public_key_pem"]) is True
+
+
+def test_signoff_requires_signature_in_production_mode():
+    store = _seeded_store()
+    p = _period(store)
+    try:
+        service.sign_off_audit_period(store, "acme", p["period_id"], reviewer="ciso", at=_NOW,
+                                      signer=None, require_signature=True)
+        raise AssertionError("signed off without a signature under require_signature")
+    except ValueError as e:
+        assert "signing key" in str(e)
 
 
 # ── downloadable ZIP ──────────────────────────────────────────────────────────

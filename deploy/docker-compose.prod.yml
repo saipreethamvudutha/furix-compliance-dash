@@ -42,6 +42,13 @@ services:
       - furix_connector_signing_secret
       - furix_attest_keys
 
+  worker:
+    environment:
+      FURIX_ENV: production
+      FURIX_CONNECTOR_SIGNING_SECRET_FILE: /run/secrets/furix_connector_signing_secret
+    secrets:
+      - furix_connector_signing_secret
+
   web:
     environment:
       FURIX_ENV: production
