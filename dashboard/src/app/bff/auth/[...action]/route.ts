@@ -47,7 +47,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function isSecure(): boolean {
-  return process.env.FURIX_COOKIE_SECURE === "1" || process.env.NODE_ENV === "production";
+  const explicit = process.env.FURIX_COOKIE_SECURE;
+  if (explicit === "0" || explicit === "false") return false;
+  if (explicit === "1" || explicit === "true") return true;
+  return process.env.NODE_ENV === "production";
 }
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ action: string[] }> }) {

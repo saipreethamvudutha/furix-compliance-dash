@@ -128,6 +128,10 @@ services:
       FURIX_API_URL: http://api:8000
       FURIX_API_KEY: ${FURIX_API_KEY:-furix-dev-key}
       FURIX_ENV: ${FURIX_ENV:-development}
+      # This stack is served over HTTP on :8088 (no TLS). Force non-Secure
+      # cookies so sessions work in the browser; set to 1 (or use the prod
+      # overlay) when TLS terminates in front of the stack.
+      FURIX_COOKIE_SECURE: ${FURIX_COOKIE_SECURE:-0}
       # ── Wave-F/G BFF secrets (fail-closed in production; see prod overlay) ──
       # Sealed-session key + per-user token minting secret. The mint secret MUST
       # equal the api's FURIX_OIDC_HS256_SECRET.

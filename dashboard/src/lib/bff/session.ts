@@ -127,7 +127,13 @@ function readCookie(cookieHeader: string | null, name: string): string | undefin
 }
 
 function isSecure(): boolean {
-  return process.env.FURIX_COOKIE_SECURE === "1" || process.env.NODE_ENV === "production";
+  // Explicit FURIX_COOKIE_SECURE wins (so an http deployment behind a plain
+  // reverse proxy can force non-Secure with FURIX_COOKIE_SECURE=0 even though
+  // `next start` sets NODE_ENV=production); otherwise default from NODE_ENV.
+  const explicit = process.env.FURIX_COOKIE_SECURE;
+  if (explicit === "0" || explicit === "false") return false;
+  if (explicit === "1" || explicit === "true") return true;
+  return process.env.NODE_ENV === "production";
 }
 
 export const SESSION = { COOKIE_NAME, CSRF_COOKIE, TTL_SECONDS };
