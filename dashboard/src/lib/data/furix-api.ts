@@ -410,3 +410,41 @@ export function reopenAuditPeriod(periodId: string, reason: string): Promise<Aud
 export function auditPackageUrl(periodId: string): string {
   return `${API_BASE}/api/audit-periods/${encodeURIComponent(periodId)}/package.zip`;
 }
+
+// ── evidence retrieval (FUR-CMP-007): resolve a furix-evidence:// URI ─────────
+export type EvidenceEnvelope = {
+  evidence_id: string;
+  source: string;
+  tenant: string;
+  boundary: string;
+  sha256: string;
+  raw_uri: string;
+  size_bytes: number;
+  observed_at: string | null;
+  collected_at: string;
+  collector_version: string;
+  parser_version: string;
+  schema_version: string;
+  encryption?: { encrypted: boolean } & Record<string, unknown>;
+};
+
+export type EvidenceObject = {
+  sha256: string;
+  raw_uri: string;
+  /** live re-verification: the stored bytes re-hash to this address (untampered) */
+  integrity_verified: boolean;
+  size_bytes: number;
+  raw: string;
+  envelope: EvidenceEnvelope;
+};
+
+/** Extract the sha256 from a furix-evidence://<sha> URI (or accept a raw sha). */
+export function evidenceSha(uriOrSha: string): string {
+  const prefix = "furix-evidence://";
+  return uriOrSha.startsWith(prefix) ? uriOrSha.slice(prefix.length) : uriOrSha;
+}
+
+/** Resolve a furix-evidence:// URI (or raw sha) to its sealed event + envelope. */
+export function getEvidence(uriOrSha: string): Promise<EvidenceObject> {
+  return apiGet<EvidenceObject>(`/api/evidence/${encodeURIComponent(evidenceSha(uriOrSha))}`);
+}

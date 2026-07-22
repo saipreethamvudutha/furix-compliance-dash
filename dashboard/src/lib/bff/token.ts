@@ -33,8 +33,12 @@ export function mintUserToken(session: SessionData): string | null {
   const header = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const payload = b64url(
     JSON.stringify({
-      iss: process.env.FURIX_OIDC_ISSUER ?? "furix-bff",
-      aud: process.env.FURIX_OIDC_AUDIENCE ?? "furix",
+      // `||` not `??`: docker-compose passes FURIX_OIDC_ISSUER as an EMPTY
+      // string (`${FURIX_OIDC_ISSUER:-}`), which `??` would NOT replace — the
+      // token would carry iss:"" and the API would reject it ("issuer
+      // mismatch"). Fall back to the API's expected default for empty too.
+      iss: process.env.FURIX_OIDC_ISSUER || "furix-bff",
+      aud: process.env.FURIX_OIDC_AUDIENCE || "furix",
       sub: session.sub,
       tenant: session.tenant,
       role: session.role,

@@ -220,6 +220,40 @@ def test_evidence_verification_failure_aborts_ingest():
         pass
 
 
+def test_get_evidence_returns_verified_object():
+    """FUR-CMP-007: a retained evidence object resolves to its raw bytes +
+    provenance envelope, with a live integrity re-verification."""
+    from compliance_reporting.evidence import EvidenceStore
+    store = _store()
+    ev = EvidenceStore(store.root)
+    obj = ev.put("Jul  6 08:12:01 web01 sshd[4242]: Failed password for root",
+                 source="syslog", tenant="default")
+    got = service.get_evidence(store, obj.sha256)
+    assert got["sha256"] == obj.sha256
+    assert got["integrity_verified"] is True
+    assert got["raw_uri"] == f"furix-evidence://{obj.sha256}"
+    assert "Failed password" in got["raw"]
+    assert got["envelope"]["source"] == "syslog"
+    assert got["size_bytes"] > 0
+    # uppercase / whitespace in the id is tolerated (normalised to lowercase)
+    assert service.get_evidence(store, f"  {obj.sha256.upper()} ")["sha256"] == obj.sha256
+
+
+def test_get_evidence_rejects_bad_id_and_missing_object():
+    store = _store()
+    for bad in ("", "not-a-sha", "abc", "g" * 64):
+        try:
+            service.get_evidence(store, bad)
+            raise AssertionError(f"expected ValueError for {bad!r}")
+        except ValueError:
+            pass
+    try:
+        service.get_evidence(store, "0" * 64)   # well-formed but not retained
+        raise AssertionError("expected FileNotFoundError for a missing object")
+    except FileNotFoundError:
+        pass
+
+
 if __name__ == "__main__":
     import sys, traceback
     tests = [(n, f) for n, f in sorted(globals().items())

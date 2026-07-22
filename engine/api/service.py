@@ -437,6 +437,36 @@ def _report_in_window(store: ReportStore, start_date: str, end_date: str) -> str
     return max(in_window, key=lambda e: e.generated_at).report_id
 
 
+def get_evidence(store: ReportStore, sha256: str) -> dict:
+    """Resolve a retained evidence object by its content address (FUR-CMP-007).
+
+    Returns the raw event bytes (as text), the provenance envelope, and a LIVE
+    integrity re-verification — the decrypted bytes are re-hashed and compared to
+    the address, so the caller can prove the evidence is untampered. Raises
+    ValueError for a malformed id and FileNotFoundError if nothing is retained
+    under that address.
+    """
+    from compliance_reporting.evidence import EvidenceStore  # noqa: PLC0415
+
+    sha = (sha256 or "").strip().lower()
+    if len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
+        raise ValueError("invalid evidence id — expected a 64-char sha256 hex digest")
+    ev = EvidenceStore(store.root)
+    if not ev.exists(sha):
+        raise FileNotFoundError(f"no retained evidence object for {sha}")
+    envelope = ev.get_envelope(sha)
+    integrity_verified = ev.verify_object(sha)
+    raw_bytes = ev.get_raw(sha)
+    return {
+        "sha256": sha,
+        "raw_uri": f"furix-evidence://{sha}",
+        "integrity_verified": integrity_verified,
+        "size_bytes": len(raw_bytes),
+        "raw": raw_bytes.decode("utf-8", errors="replace"),
+        "envelope": envelope,
+    }
+
+
 def _verify_evidence_ref(store: ReportStore, ref: str) -> bool:
     """An evidence reference must be a furix-evidence://<sha256> that actually
     resolves to a retained, verifiable object — no arbitrary/dangling refs."""

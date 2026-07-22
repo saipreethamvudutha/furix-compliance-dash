@@ -214,6 +214,86 @@ def test_endpoints_require_auth_when_fastapi_present():
     assert r.headers.get("X-Frame-Options") == "DENY"
 
 
+def test_endpoint_rbac_matrix_all_roles():
+    """Every role, through the real HTTP stack, on representative endpoints for
+    each scope. 403 = denied, anything else = allowed. This closes the gap where
+    only 'admin' was ever exercised end-to-end (analyst / auditor / mssp /
+    readonly were untested). Also asserts evidence retrieval is a read open to
+    every authenticated role, closed to anonymous, and access-audited."""
+    import importlib
+    import json as _json
+    import os
+
+    try:
+        os.environ["FURIX_API_KEYS"] = _json.dumps([
+            {"key": "k-admin", "key_id": "adm", "tenant": "acme", "role": "admin"},
+            {"key": "k-analyst", "key_id": "ana", "tenant": "acme", "role": "analyst"},
+            {"key": "k-auditor", "key_id": "aud", "tenant": "acme", "role": "auditor"},
+            {"key": "k-mssp", "key_id": "ms", "tenant": "acme", "role": "mssp"},
+            {"key": "k-readonly", "key_id": "ro", "tenant": "acme", "role": "readonly"},
+        ])
+        os.environ["FURIX_REPORT_STORE"] = tempfile.mkdtemp(prefix="furix_rbac_")
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        from api import main as main_mod  # noqa: PLC0415
+        importlib.reload(main_mod)
+        client = TestClient(main_mod.app)
+    except Exception as e:  # noqa: BLE001
+        print(f"  (skipped: fastapi/testclient not available here: {e})")
+        return
+
+    keys = {"admin": "k-admin", "analyst": "k-analyst", "auditor": "k-auditor",
+            "mssp": "k-mssp", "readonly": "k-readonly"}
+
+    def h(role):
+        return {"Authorization": f"Bearer {keys[role]}"}
+
+    def denied(status):
+        return status == 403
+
+    # retain one evidence object in the acme tenant so GET /api/evidence → 200
+    from compliance_reporting.evidence import EvidenceStore  # noqa: PLC0415
+    ev = EvidenceStore(main_mod._stores.for_tenant("acme").root)
+    obj = ev.put("Jul  6 08:12:01 web01 sshd[4242]: Failed password for root",
+                 source="syslog", tenant="acme")
+
+    # READ (reports + evidence): every role is allowed
+    for role in keys:
+        assert client.get("/api/reports", headers=h(role)).status_code == 200, f"read/{role}"
+        ev_status = client.get(f"/api/evidence/{obj.sha256}", headers=h(role)).status_code
+        assert ev_status == 200, f"evidence read/{role} got {ev_status}"
+
+    # INGEST: admin / analyst / mssp allowed; auditor / readonly denied
+    for role in keys:
+        st = client.post("/api/ingest", json={"text": "x"}, headers=h(role)).status_code
+        if role in ("admin", "analyst", "mssp"):
+            assert not denied(st), f"{role} should ingest (got {st})"
+        else:
+            assert denied(st), f"{role} should be denied ingest (got {st})"
+
+    # EXPORT (oscal): admin / auditor allowed; analyst / mssp / readonly denied
+    for role in keys:
+        st = client.get("/api/oscal", headers=h(role)).status_code
+        if role in ("admin", "auditor"):
+            assert not denied(st), f"{role} should export (got {st})"
+        else:
+            assert denied(st), f"{role} should be denied export (got {st})"
+
+    # ADMIN (admin audit-log): only admin
+    for role in keys:
+        st = client.get("/api/admin/audit-log", headers=h(role)).status_code
+        if role == "admin":
+            assert not denied(st), f"admin should read the admin audit-log (got {st})"
+        else:
+            assert denied(st), f"{role} should be denied the admin audit-log (got {st})"
+
+    # evidence retrieval is closed to anonymous
+    assert client.get(f"/api/evidence/{obj.sha256}").status_code == 401
+    # and every evidence access is written to the admin audit log
+    log = client.get("/api/admin/audit-log", headers=h("admin")).json()
+    assert any("evidence.access" in _json.dumps(e) for e in log), \
+        "evidence.access must be recorded in the admin audit log"
+
+
 # ── OIDC / JWT bearer auth (Wave 4) ───────────────────────────────────────────
 def _oidc_reg():
     from .jwt_auth import OIDCConfig

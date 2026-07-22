@@ -113,6 +113,22 @@ test("mint secret set → a per-user HS256 token carrying the identity", () => {
   assert.ok(claims.exp > claims.iat, "token is short-lived");
 });
 
+test("minted token has a non-empty issuer even when FURIX_OIDC_ISSUER='' (regression)", () => {
+  // docker-compose passes FURIX_OIDC_ISSUER as an empty string; `??` would keep
+  // iss:"" and the API rejects it ("issuer mismatch"). Must fall back to the
+  // API's expected default so per-user calls (ingest/compliance/audit) work.
+  process.env.FURIX_BFF_MINT_SECRET = "mint-secret";
+  const prev = process.env.FURIX_OIDC_ISSUER;
+  process.env.FURIX_OIDC_ISSUER = "";
+  const tok = mintUserToken(SESSION)!;
+  if (prev === undefined) delete process.env.FURIX_OIDC_ISSUER;
+  else process.env.FURIX_OIDC_ISSUER = prev;
+  delete process.env.FURIX_BFF_MINT_SECRET;
+  const claims = JSON.parse(Buffer.from(tok.split(".")[1], "base64url").toString("utf8"));
+  assert.equal(claims.iss, "furix-bff");
+  assert.equal(claims.aud, "furix");
+});
+
 // ── token.ts: coarse per-user API authorization (RBAC) ────────────────────────
 test("auditor may read and export but not ingest", () => {
   assert.equal(bffAllows("auditor", "GET", "api/summary"), true);
@@ -136,6 +152,13 @@ test("admin may do everything; health is always open", () => {
 test("attestation submission is a write (ingest-capable roles only)", () => {
   assert.equal(bffAllows("analyst", "POST", "api/attestations"), true);
   assert.equal(bffAllows("auditor", "POST", "api/attestations"), false);
+});
+
+test("evidence retrieval is a read — allowed for every authenticated role", () => {
+  const sha = "a".repeat(64);
+  for (const role of ["admin", "analyst", "auditor", "mssp", "readonly"]) {
+    assert.equal(bffAllows(role, "GET", `api/evidence/${sha}`), true);
+  }
 });
 
 // ── env.ts: Docker-secrets file resolution ────────────────────────────────────

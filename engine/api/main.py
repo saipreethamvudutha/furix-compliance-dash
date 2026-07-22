@@ -965,6 +965,27 @@ def scim_deactivate_user(user_id: str,
         return _scim_error(e)
 
 
+# ── evidence retrieval (FUR-CMP-007): resolve a furix-evidence://<sha> ─────────
+@app.get("/api/evidence/{sha256}")
+def get_evidence(sha256: str,
+                 principal: Principal = Depends(require(SCOPE_READ, "get_evidence")),
+                 tenant: str | None = None):
+    """Return a retained evidence object (raw event + provenance envelope + live
+    integrity re-verification). Every access is recorded in the administrative
+    audit log so an auditor can see who viewed which evidence, and when."""
+    store = _store_for(principal, tenant)
+    try:
+        result = service.get_evidence(store, sha256)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="evidence object not found")
+    _record_admin(principal, "evidence.access", target=sha256,
+                  details={"integrity_verified": result.get("integrity_verified"),
+                           "source": result.get("envelope", {}).get("source")})
+    return result
+
+
 # ── OSCAL + auditor workspace (Wave 5) ────────────────────────────────────────
 @app.get("/api/oscal")
 def oscal(principal: Principal = Depends(require(SCOPE_EXPORT, "oscal")),
