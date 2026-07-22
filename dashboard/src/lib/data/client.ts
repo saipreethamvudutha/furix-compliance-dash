@@ -18,7 +18,7 @@ export class ApiError extends Error {
   }
 }
 
-function readCsrf(): string {
+export function readCsrf(): string {
   if (typeof document === "undefined") return "";
   for (const part of document.cookie.split(";")) {
     const [k, ...v] = part.trim().split("=");

@@ -4,7 +4,7 @@
 // ============================================================
 
 import type { ComplianceFramework } from "./types";
-import { apiGet, apiPost, apiPut, safeGet, API_BASE } from "./client";
+import { apiGet, apiPost, apiPut, safeGet, API_BASE, readCsrf } from "./client";
 
 export type FrameworkKpi = {
   id: string;
@@ -104,6 +104,10 @@ export async function ingestFile(file: File, logType = "auto"): Promise<JobRef> 
   const res = await fetch(`${API_BASE}/api/ingest-file?log_type=${encodeURIComponent(logType)}`, {
     method: "POST",
     body: form,
+    // CSRF double-submit: the BFF requires this header on every write. Do NOT
+    // set content-type — the browser must set the multipart boundary itself.
+    headers: { "x-csrf-token": readCsrf() },
+    credentials: "same-origin", // send the session cookie
     cache: "no-store",
   });
   if (!res.ok) {
