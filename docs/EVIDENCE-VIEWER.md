@@ -82,13 +82,20 @@ Anonymous evidence access is `401`; every authorized access is audited.
    which disables the built-in demo users; a `FURIX_BFF_USERS` directory (or
    OIDC) is required to log in. Documented with a ready demo block in
    `deploy/.env.example` (four users, one per role).
+4. **File upload 403 (CSRF).** `ingestFile()` used a raw `fetch` that omitted the
+   `x-csrf-token` header, so the BFF rejected every log-file upload with
+   `403 CSRF token missing or invalid` (text ingest worked because it goes
+   through the client helper that adds it). Fixed by exporting `readCsrf` and
+   attaching it (plus explicit same-origin credentials) to the upload in
+   `dashboard/src/lib/data/furix-api.ts`.
 
 ## Verification (all local, pre-push)
 
 - Engine: `python -m api.test_service` (14/14), `python -m api.test_auth` (20/20,
   incl. the all-roles matrix).
-- Dashboard: `npm test` (43/43 BFF tests, incl. the issuer regression + evidence
+- Dashboard: `npm test` (44/44 BFF tests, incl. the issuer regression + evidence
   RBAC), `npm run build` (clean `tsc` + `next build`).
+- File-upload CSRF fix verified live on the server (upload succeeds end-to-end).
 
 ## Demo script (for a client)
 
