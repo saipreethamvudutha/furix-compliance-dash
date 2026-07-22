@@ -81,6 +81,31 @@ Using the `CreateUser` example:
 
 ---
 
+## Retention & legal hold
+
+Evidence isn't kept forever — and sometimes it must be kept *longer*. The viewer
+shows both under **Retention & legal hold**:
+
+- **Retained until `<date>` (HIPAA)** — the mandated minimum retention window,
+  computed from the event's *collected-at* plus the governing policy. Regulatory
+  floors: **HIPAA 6 years**, PCI DSS 1 year, SOX 7 years, SOC 2 1 year, ISO 27001
+  3 years. Default is HIPAA 6y (apt for a health insurer); the strictest
+  applicable framework wins (`FURIX_RETENTION_CLASS` / `FURIX_RETENTION_DAYS`).
+- **Days remaining** counts down to that date. Past it, the badge turns red
+  (**Retention expired**) — a signal it *may* be purged, never a silent deletion.
+- **Legal hold** freezes an object against expiry and deletion (litigation or
+  audit hold). While a hold is active the object is **never** treated as expired,
+  regardless of the retention clock.
+
+Because evidence is write-once, retention is computed fresh on every read (so a
+policy change applies everywhere at once), and legal holds live in a separate
+mutable registry. Placing a hold is an **auditor/admin** action; releasing one is
+**admin-only** (it re-enables expiry). Both are recorded in the admin audit log.
+
+> Client line: *"We prove we keep evidence for the legally required window — six
+> years for HIPAA — and a legal hold can freeze anything indefinitely for
+> litigation, with who placed it and why on the record."*
+
 ## 5. Verify it yourself (don't trust — check)
 
 Because the address is a plain SHA-256, an auditor can reproduce it independently

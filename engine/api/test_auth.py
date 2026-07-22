@@ -294,6 +294,57 @@ def test_endpoint_rbac_matrix_all_roles():
         "evidence.access must be recorded in the admin audit log"
 
 
+def test_legal_hold_rbac():
+    """Placing a legal hold requires the export scope (auditor/admin); releasing
+    requires admin. Analyst / mssp / readonly are denied both, at the API."""
+    import importlib
+    import json as _json
+    import os
+
+    try:
+        os.environ["FURIX_API_KEYS"] = _json.dumps([
+            {"key": "k-admin", "key_id": "adm", "tenant": "acme", "role": "admin"},
+            {"key": "k-analyst", "key_id": "ana", "tenant": "acme", "role": "analyst"},
+            {"key": "k-auditor", "key_id": "aud", "tenant": "acme", "role": "auditor"},
+            {"key": "k-mssp", "key_id": "ms", "tenant": "acme", "role": "mssp"},
+            {"key": "k-readonly", "key_id": "ro", "tenant": "acme", "role": "readonly"},
+        ])
+        os.environ["FURIX_REPORT_STORE"] = tempfile.mkdtemp(prefix="furix_lh_")
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        from api import main as main_mod  # noqa: PLC0415
+        importlib.reload(main_mod)
+        client = TestClient(main_mod.app)
+    except Exception as e:  # noqa: BLE001
+        print(f"  (skipped: fastapi/testclient not available here: {e})")
+        return
+
+    from compliance_reporting.evidence import EvidenceStore  # noqa: PLC0415
+    obj = EvidenceStore(main_mod._stores.for_tenant("acme").root).put(
+        "evt", source="syslog", tenant="acme")
+    keys = {"admin": "k-admin", "analyst": "k-analyst", "auditor": "k-auditor",
+            "mssp": "k-mssp", "readonly": "k-readonly"}
+
+    def h(role):
+        return {"Authorization": f"Bearer {keys[role]}"}
+
+    # place (POST): admin / auditor allowed; analyst / mssp / readonly denied
+    for role in keys:
+        st = client.post(f"/api/evidence/{obj.sha256}/legal-hold",
+                         json={"reason": "litigation"}, headers=h(role)).status_code
+        if role in ("admin", "auditor"):
+            assert st != 403, f"{role} should place a hold (got {st})"
+        else:
+            assert st == 403, f"{role} should be denied placing a hold (got {st})"
+
+    # release (DELETE): only admin (admin runs first, releasing the active hold)
+    for role in keys:
+        st = client.delete(f"/api/evidence/{obj.sha256}/legal-hold", headers=h(role)).status_code
+        if role == "admin":
+            assert st != 403, f"admin should release a hold (got {st})"
+        else:
+            assert st == 403, f"{role} should be denied releasing a hold (got {st})"
+
+
 # ── OIDC / JWT bearer auth (Wave 4) ───────────────────────────────────────────
 def _oidc_reg():
     from .jwt_auth import OIDCConfig

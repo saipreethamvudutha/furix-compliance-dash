@@ -4,7 +4,7 @@
 // ============================================================
 
 import type { ComplianceFramework } from "./types";
-import { apiGet, apiPost, apiPut, safeGet, API_BASE, readCsrf } from "./client";
+import { apiGet, apiPost, apiPut, apiDelete, safeGet, API_BASE, readCsrf } from "./client";
 
 export type FrameworkKpi = {
   id: string;
@@ -432,6 +432,29 @@ export type EvidenceEnvelope = {
   encryption?: { encrypted: boolean } & Record<string, unknown>;
 };
 
+export type LegalHold = {
+  sha256: string;
+  active: boolean;
+  reason?: string;
+  placed_by?: string;
+  placed_at?: string;
+  released_by?: string;
+  released_at?: string;
+  release_reason?: string;
+};
+
+export type RetentionPosture = {
+  /** governing framework key, e.g. "hipaa" */
+  class: string;
+  retention_days: number;
+  retain_until: string | null;
+  /** true once past retention AND not under an active legal hold */
+  expired: boolean;
+  days_remaining: number | null;
+  on_legal_hold: boolean;
+  legal_hold: LegalHold | null;
+};
+
 export type EvidenceObject = {
   sha256: string;
   raw_uri: string;
@@ -440,6 +463,7 @@ export type EvidenceObject = {
   size_bytes: number;
   raw: string;
   envelope: EvidenceEnvelope;
+  retention: RetentionPosture;
 };
 
 /** Extract the sha256 from a furix-evidence://<sha> URI (or accept a raw sha). */
@@ -451,4 +475,19 @@ export function evidenceSha(uriOrSha: string): string {
 /** Resolve a furix-evidence:// URI (or raw sha) to its sealed event + envelope. */
 export function getEvidence(uriOrSha: string): Promise<EvidenceObject> {
   return apiGet<EvidenceObject>(`/api/evidence/${encodeURIComponent(evidenceSha(uriOrSha))}`);
+}
+
+/** Place a legal hold on an evidence object (auditor/admin). Freezes retention. */
+export function placeLegalHold(uriOrSha: string, reason: string): Promise<LegalHold> {
+  return apiPost<LegalHold>(
+    `/api/evidence/${encodeURIComponent(evidenceSha(uriOrSha))}/legal-hold`,
+    { reason },
+  );
+}
+
+/** Release a legal hold (admin). Re-enables retention expiry. */
+export function releaseLegalHold(uriOrSha: string, reason = ""): Promise<LegalHold> {
+  return apiDelete<LegalHold>(
+    `/api/evidence/${encodeURIComponent(evidenceSha(uriOrSha))}/legal-hold?reason=${encodeURIComponent(reason)}`,
+  );
 }

@@ -53,6 +53,25 @@ a viewer, and an access-audit trail.
 - Impl: `dashboard/src/components/compliance/evidence-modal.tsx`,
   `dashboard/src/lib/data/furix-api.ts::getEvidence`, wired in `control-table.tsx`.
 
+### Retention & legal hold (FUR-CMP-008)
+- **Retention** is computed at *read* time from the object's `collected_at` plus a
+  configurable policy — because evidence is write-once, nothing is stamped onto
+  the sealed envelope, so a policy change applies uniformly. Regulatory floors by
+  framework (`FRAMEWORK_RETENTION_DAYS`): **HIPAA 6y**, PCI DSS 1y, SOX 7y, SOC 2
+  1y, ISO 27001 3y. The effective policy is the strictest applicable; default is
+  HIPAA 6y (`FURIX_RETENTION_CLASS` / `FURIX_RETENTION_DAYS` to override). Returns
+  `retain_until`, `expired`, `days_remaining`.
+- **Legal hold** is a separate mutable per-tenant registry (place/release), since a
+  hold is changeable state that cannot live in the write-once object. An active
+  hold **overrides retention expiry** — held evidence is never past-retention.
+- Endpoints: `POST /api/evidence/{sha}/legal-hold` (place — auditor/admin) and
+  `DELETE …/legal-hold` (release — admin only); both audited
+  (`evidence.legal_hold.place|release`). The evidence viewer shows retain-until /
+  days-remaining / expired and the hold state, with role-gated place/release
+  buttons.
+- Impl: `engine/compliance_reporting/retention.py`,
+  `engine/compliance_reporting/legal_hold.py`, service + endpoints, and the modal.
+
 ## RBAC — all roles now tested end-to-end
 
 The role→scope model was only ever exercised for `admin`. Added an HTTP-level
@@ -91,10 +110,10 @@ Anonymous evidence access is `401`; every authorized access is audited.
 
 ## Verification (all local, pre-push)
 
-- Engine: `python -m api.test_service` (14/14), `python -m api.test_auth` (20/20,
-  incl. the all-roles matrix).
-- Dashboard: `npm test` (44/44 BFF tests, incl. the issuer regression + evidence
-  RBAC), `npm run build` (clean `tsc` + `next build`).
+- Engine: `python -m api.test_service` (17/17, incl. retention + legal-hold),
+  `python -m api.test_auth` (21/21, incl. the all-roles matrix + legal-hold RBAC).
+- Dashboard: `npm test` (45/45 BFF tests, incl. the issuer regression + evidence
+  & legal-hold RBAC), `npm run build` (clean `tsc` + `next build`).
 - File-upload CSRF fix verified live on the server (upload succeeds end-to-end).
 
 ## Demo script (for a client)
@@ -108,7 +127,7 @@ Anonymous evidence access is `401`; every authorized access is audited.
 
 ## Not yet built (future increments)
 
-- Retention **class + `retention_until` + legal hold** stamped on the envelope
-  (HIPAA 6y / PCI 1y), surfaced in the viewer.
-- WORM posture indicator (filesystem vs S3 Object Lock).
+- WORM posture indicator (filesystem vs S3 Object Lock) surfaced in the viewer.
+- Retention **expiry enforcement / purge job** (today retention is computed and
+  displayed, and legal hold blocks expiry — but nothing is auto-deleted yet).
 - Evidence viewer wired into the control-detail page and posture-run lineage.

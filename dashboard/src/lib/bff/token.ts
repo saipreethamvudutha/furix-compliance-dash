@@ -57,6 +57,12 @@ export function bffAllows(role: string, method: string, apiPath: string): boolea
   const isWrite = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
   const p = apiPath.replace(/^\/?api\//, "");
   if (p.startsWith("health")) return true;
+  // legal hold: placing (POST) is an auditor/admin authority act; releasing
+  // (DELETE) is admin-only — it re-enables retention expiry/purge.
+  if (p.includes("/legal-hold")) {
+    if (method === "DELETE") return role === "admin";
+    return ["admin", "auditor"].includes(role);
+  }
   // export-only surfaces require the auditor's export scope OR admin
   if (p.startsWith("oscal") || p.startsWith("audit/")) {
     return ["admin", "auditor"].includes(role);

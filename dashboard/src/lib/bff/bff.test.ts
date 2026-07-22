@@ -161,6 +161,17 @@ test("evidence retrieval is a read — allowed for every authenticated role", ()
   }
 });
 
+test("legal hold: place is auditor/admin, release is admin-only", () => {
+  const p = `api/evidence/${"b".repeat(64)}/legal-hold`;
+  assert.equal(bffAllows("auditor", "POST", p), true);
+  assert.equal(bffAllows("admin", "POST", p), true);
+  assert.equal(bffAllows("analyst", "POST", p), false);
+  assert.equal(bffAllows("mssp", "POST", p), false);
+  assert.equal(bffAllows("admin", "DELETE", p), true);
+  assert.equal(bffAllows("auditor", "DELETE", p), false);
+  assert.equal(bffAllows("analyst", "DELETE", p), false);
+});
+
 // ── env.ts: Docker-secrets file resolution ────────────────────────────────────
 test("readSecret prefers X_FILE over inline X and trims it", () => {
   const f = path.join(os.tmpdir(), `furix-secret-${process.pid}.txt`);

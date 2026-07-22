@@ -437,26 +437,46 @@ def _report_in_window(store: ReportStore, start_date: str, end_date: str) -> str
     return max(in_window, key=lambda e: e.generated_at).report_id
 
 
-def get_evidence(store: ReportStore, sha256: str) -> dict:
-    """Resolve a retained evidence object by its content address (FUR-CMP-007).
-
-    Returns the raw event bytes (as text), the provenance envelope, and a LIVE
-    integrity re-verification — the decrypted bytes are re-hashed and compared to
-    the address, so the caller can prove the evidence is untampered. Raises
-    ValueError for a malformed id and FileNotFoundError if nothing is retained
-    under that address.
-    """
-    from compliance_reporting.evidence import EvidenceStore  # noqa: PLC0415
-
+def _evidence_sha(sha256: str) -> str:
+    """Normalise + validate an evidence content address (64-char sha256 hex)."""
     sha = (sha256 or "").strip().lower()
     if len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
         raise ValueError("invalid evidence id — expected a 64-char sha256 hex digest")
+    return sha
+
+
+def get_evidence(store: ReportStore, sha256: str, *, now=None) -> dict:
+    """Resolve a retained evidence object by its content address (FUR-CMP-007/008).
+
+    Returns the raw event bytes (as text), the provenance envelope, a LIVE
+    integrity re-verification (decrypted bytes re-hashed vs the address), and the
+    retention posture (retain-until / expired under the configured policy, with an
+    active legal hold overriding expiry). Raises ValueError for a malformed id and
+    FileNotFoundError if nothing is retained under that address.
+    """
+    from compliance_reporting.evidence import EvidenceStore  # noqa: PLC0415
+    from compliance_reporting.legal_hold import LegalHoldStore  # noqa: PLC0415
+    from compliance_reporting.retention import retention_for  # noqa: PLC0415
+
+    sha = _evidence_sha(sha256)
     ev = EvidenceStore(store.root)
     if not ev.exists(sha):
         raise FileNotFoundError(f"no retained evidence object for {sha}")
     envelope = ev.get_envelope(sha)
     integrity_verified = ev.verify_object(sha)
     raw_bytes = ev.get_raw(sha)
+
+    hold_rec = LegalHoldStore(store.root).get(sha)
+    on_hold = bool(hold_rec and hold_rec.get("active"))
+    retention = retention_for(envelope.get("collected_at"), now=now)
+    # an active legal hold freezes the object — never treat it as past-retention
+    retention = {
+        **retention,
+        "expired": retention["expired"] and not on_hold,
+        "on_legal_hold": on_hold,
+        "legal_hold": hold_rec,
+    }
+
     return {
         "sha256": sha,
         "raw_uri": f"furix-evidence://{sha}",
@@ -464,7 +484,31 @@ def get_evidence(store: ReportStore, sha256: str) -> dict:
         "size_bytes": len(raw_bytes),
         "raw": raw_bytes.decode("utf-8", errors="replace"),
         "envelope": envelope,
+        "retention": retention,
     }
+
+
+def place_legal_hold(store: ReportStore, sha256: str, *, reason: str, actor: str, at: str) -> dict:
+    """Place a legal hold on a retained evidence object (overrides retention expiry)."""
+    from compliance_reporting.evidence import EvidenceStore  # noqa: PLC0415
+    from compliance_reporting.legal_hold import LegalHoldStore  # noqa: PLC0415
+    sha = _evidence_sha(sha256)
+    if not EvidenceStore(store.root).exists(sha):
+        raise FileNotFoundError(f"no retained evidence object for {sha}")
+    return LegalHoldStore(store.root).place(sha, reason=reason, actor=actor, at=at)
+
+
+def release_legal_hold(store: ReportStore, sha256: str, *, actor: str, at: str, reason: str = "") -> dict:
+    """Release an active legal hold (the record is retained soft for audit)."""
+    from compliance_reporting.legal_hold import LegalHoldStore  # noqa: PLC0415
+    sha = _evidence_sha(sha256)
+    return LegalHoldStore(store.root).release(sha, actor=actor, at=at, reason=reason)
+
+
+def list_legal_holds(store: ReportStore, *, active_only: bool = True) -> list:
+    """List legal holds for a tenant (active by default)."""
+    from compliance_reporting.legal_hold import LegalHoldStore  # noqa: PLC0415
+    return LegalHoldStore(store.root).list(active_only=active_only)
 
 
 def _verify_evidence_ref(store: ReportStore, ref: str) -> bool:

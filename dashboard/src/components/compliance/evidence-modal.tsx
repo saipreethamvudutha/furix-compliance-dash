@@ -1,8 +1,9 @@
 "use client";
 
-// Evidence viewer (FUR-CMP-007). Resolves a furix-evidence://<sha> URI through
-// the BFF to its sealed original event + provenance envelope, and shows a live
-// integrity verdict. Every open is recorded server-side in the admin audit log.
+// Evidence viewer (FUR-CMP-007/008). Resolves a furix-evidence://<sha> URI through
+// the BFF to its sealed original event + provenance envelope, shows a live
+// integrity verdict, and the retention posture (retain-until / legal hold). Every
+// open is recorded server-side in the admin audit log.
 
 import { useEffect, useState, type ReactNode } from "react";
 import {
@@ -12,8 +13,12 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { ShieldCheck, ShieldAlert, Loader2, FileText, Lock, Clock, GitBranch, Hash } from "lucide-react";
-import { getEvidence, evidenceSha, type EvidenceObject } from "@/lib/data/furix-api";
+import {
+  ShieldCheck, ShieldAlert, Loader2, FileText, Lock, Clock, GitBranch, Hash, Scale,
+} from "lucide-react";
+import {
+  getEvidence, evidenceSha, placeLegalHold, releaseLegalHold, type EvidenceObject,
+} from "@/lib/data/furix-api";
 
 function prettyRaw(raw: string): string {
   const t = raw.trim();
@@ -39,6 +44,13 @@ export function EvidenceModal({
   const [data, setData] = useState<EvidenceObject | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [role, setRole] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") setRole(localStorage.getItem("byoc-rbac-role"));
+  }, []);
 
   useEffect(() => {
     if (!open || !uri) return;
@@ -53,10 +65,42 @@ export function EvidenceModal({
     return () => {
       cancelled = true;
     };
-  }, [open, uri]);
+  }, [open, uri, reloadKey]);
 
   const sha = uri ? evidenceSha(uri) : "";
   const env = data?.envelope;
+  const ret = data?.retention;
+  const canPlace = role === "admin" || role === "auditor";
+  const canRelease = role === "admin";
+
+  async function doPlace() {
+    if (!uri) return;
+    const reason = window.prompt("Reason for placing a legal hold on this evidence:");
+    if (!reason || !reason.trim()) return;
+    setActionBusy(true);
+    try {
+      await placeLegalHold(uri, reason.trim());
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function doRelease() {
+    if (!uri) return;
+    const reason = window.prompt("Reason for releasing this legal hold:") ?? "";
+    setActionBusy(true);
+    try {
+      await releaseLegalHold(uri, reason.trim());
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActionBusy(false);
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -82,13 +126,13 @@ export function EvidenceModal({
             <div className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-700 dark:text-rose-300">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
               <div>
-                <div className="font-medium">Could not load evidence</div>
+                <div className="font-medium">Something went wrong</div>
                 <div className="mt-0.5 break-all text-xs opacity-90">{error}</div>
               </div>
             </div>
           )}
 
-          {data && env && (
+          {data && env && ret && (
             <>
               <div
                 className={`flex items-center gap-2 rounded-lg border p-3 text-sm ${
@@ -110,6 +154,87 @@ export function EvidenceModal({
                     {data.integrity_verified
                       ? "The stored bytes re-hash to this exact SHA-256 — untampered."
                       : "The stored bytes do not match the address — possible tampering."}
+                  </div>
+                </div>
+              </div>
+
+              {/* retention & legal hold */}
+              <div>
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  Retention &amp; legal hold
+                </div>
+                <div
+                  className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
+                    ret.on_legal_hold
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                      : ret.expired
+                        ? "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                        : "border-slate-200 dark:border-slate-700"
+                  }`}
+                >
+                  {ret.on_legal_hold ? (
+                    <Scale className="mt-0.5 h-4 w-4 shrink-0" />
+                  ) : (
+                    <Clock className="mt-0.5 h-4 w-4 shrink-0" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    {ret.on_legal_hold ? (
+                      <>
+                        <div className="font-medium">On legal hold — retention frozen</div>
+                        {ret.legal_hold?.reason && (
+                          <div className="text-xs opacity-80">Reason: {ret.legal_hold.reason}</div>
+                        )}
+                        {ret.legal_hold?.placed_by && (
+                          <div className="text-xs opacity-70">
+                            by {ret.legal_hold.placed_by} · {ret.legal_hold.placed_at?.slice(0, 10)}
+                          </div>
+                        )}
+                      </>
+                    ) : ret.retain_until ? (
+                      <>
+                        <div className="font-medium">
+                          {ret.expired ? "Retention expired" : "Retained"} until{" "}
+                          {ret.retain_until.slice(0, 10)}
+                          <span className="ml-1 font-normal uppercase opacity-70">({ret.class})</span>
+                        </div>
+                        <div className="text-xs opacity-80">
+                          {ret.expired
+                            ? "Past the mandated retention window."
+                            : `${ret.days_remaining?.toLocaleString()} days remaining · ${Math.round(
+                                ret.retention_days / 365,
+                              )}-year policy`}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-xs opacity-80">
+                        No collection time on record — retention window not computed.
+                      </div>
+                    )}
+
+                    <div className="mt-2 flex gap-2">
+                      {!ret.on_legal_hold && canPlace && (
+                        <button
+                          type="button"
+                          disabled={actionBusy}
+                          onClick={doPlace}
+                          className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-300"
+                        >
+                          {actionBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Lock className="h-3 w-3" />}
+                          Place legal hold
+                        </button>
+                      )}
+                      {ret.on_legal_hold && canRelease && (
+                        <button
+                          type="button"
+                          disabled={actionBusy}
+                          onClick={doRelease}
+                          className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
+                        >
+                          {actionBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                          Release hold
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

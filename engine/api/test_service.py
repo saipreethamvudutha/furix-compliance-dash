@@ -254,6 +254,65 @@ def test_get_evidence_rejects_bad_id_and_missing_object():
         pass
 
 
+def test_evidence_includes_retention_posture():
+    """FUR-CMP-008: get_evidence reports retention (class/retain_until/expired)."""
+    from compliance_reporting.evidence import EvidenceStore
+    store = _store()
+    obj = EvidenceStore(store.root).put("evt", source="syslog", tenant="default")
+    r = service.get_evidence(store, obj.sha256)["retention"]
+    assert r["class"] == "hipaa" and r["retention_days"] == 2190
+    assert r["retain_until"] is not None
+    assert r["expired"] is False
+    assert r["on_legal_hold"] is False and r["legal_hold"] is None
+
+
+def test_retention_expiry_and_legal_hold_override():
+    """An object past its retention window is expired — unless a legal hold is
+    active, which freezes it (overrides expiry). Release re-enables expiry."""
+    from datetime import datetime, timezone
+    from compliance_reporting.evidence import EvidenceStore
+    from compliance_reporting.retention import retention_for
+
+    now = datetime(2026, 7, 22, tzinfo=timezone.utc)
+    assert retention_for("2010-01-01T00:00:00+00:00", now=now)["expired"] is True
+    assert retention_for(now.isoformat(), now=now)["expired"] is False
+
+    store = _store()
+    obj = EvidenceStore(store.root).put("old evt", source="syslog", tenant="default",
+                                        collected_at="2010-01-01T00:00:00+00:00")
+    assert service.get_evidence(store, obj.sha256, now=now)["retention"]["expired"] is True
+    service.place_legal_hold(store, obj.sha256, reason="litigation X", actor="auditor",
+                             at="2026-07-22T00:00:00+00:00")
+    held = service.get_evidence(store, obj.sha256, now=now)["retention"]
+    assert held["on_legal_hold"] is True and held["expired"] is False
+    service.release_legal_hold(store, obj.sha256, actor="admin",
+                               at="2026-07-22T01:00:00+00:00", reason="closed")
+    assert service.get_evidence(store, obj.sha256, now=now)["retention"]["expired"] is True
+
+
+def test_legal_hold_validation():
+    from compliance_reporting.evidence import EvidenceStore
+    from compliance_reporting.legal_hold import LegalHoldError
+    store = _store()
+    obj = EvidenceStore(store.root).put("evt", source="syslog", tenant="default")
+    for bad_reason in ("", "   "):
+        try:
+            service.place_legal_hold(store, obj.sha256, reason=bad_reason, actor="a", at="t")
+            raise AssertionError("expected LegalHoldError for empty reason")
+        except LegalHoldError:
+            pass
+    try:
+        service.place_legal_hold(store, "0" * 64, reason="x", actor="a", at="t")
+        raise AssertionError("expected FileNotFoundError for a missing object")
+    except FileNotFoundError:
+        pass
+    try:
+        service.release_legal_hold(store, obj.sha256, actor="a", at="t")
+        raise AssertionError("expected LegalHoldError releasing a non-held object")
+    except LegalHoldError:
+        pass
+
+
 if __name__ == "__main__":
     import sys, traceback
     tests = [(n, f) for n, f in sorted(globals().items())

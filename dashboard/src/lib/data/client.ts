@@ -70,6 +70,10 @@ export function apiPut<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, { method: "PUT", body: JSON.stringify(body) });
 }
 
+export function apiDelete<T>(path: string): Promise<T> {
+  return request<T>(path, { method: "DELETE" });
+}
+
 /** GET that returns `fallback` on any error (for graceful degradation). */
 export async function safeGet<T>(path: string, fallback: T): Promise<T> {
   try {

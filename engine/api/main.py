@@ -33,6 +33,7 @@ from compliance_reporting.admin_audit import AdminAuditLog
 from compliance_reporting.attestation_store import AttestationError, AttestationStore
 from compliance_reporting.connector_registry import ConnectorRegistry
 from compliance_reporting.scim import ScimError, ScimUserStore
+from compliance_reporting.legal_hold import LegalHoldError
 from compliance_reporting.work_queue import WorkQueue
 
 from . import service
@@ -984,6 +985,48 @@ def get_evidence(sha256: str,
                   details={"integrity_verified": result.get("integrity_verified"),
                            "source": result.get("envelope", {}).get("source")})
     return result
+
+
+class LegalHoldBody(BaseModel):
+    reason: str = ""
+
+
+@app.post("/api/evidence/{sha256}/legal-hold", status_code=201)
+def place_legal_hold(sha256: str, body: LegalHoldBody,
+                     principal: Principal = Depends(require(SCOPE_EXPORT, "place_legal_hold"))):
+    """Place a legal hold (litigation/audit hold) on an evidence object — freezes
+    it against retention expiry. Requires the export scope (auditor/admin)."""
+    store = _store_for(principal, None)
+    try:
+        rec = service.place_legal_hold(store, sha256, reason=body.reason,
+                                        actor=principal.key_id, at=service.now_iso())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="evidence object not found")
+    except LegalHoldError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _record_admin(principal, "evidence.legal_hold.place", target=sha256,
+                  details={"reason": body.reason})
+    return rec
+
+
+@app.delete("/api/evidence/{sha256}/legal-hold")
+def release_legal_hold(sha256: str,
+                       principal: Principal = Depends(require(SCOPE_ADMIN, "release_legal_hold")),
+                       reason: str = ""):
+    """Release a legal hold — admin authority, since it re-enables expiry/purge."""
+    store = _store_for(principal, None)
+    try:
+        rec = service.release_legal_hold(store, sha256, actor=principal.key_id,
+                                         at=service.now_iso(), reason=reason)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except LegalHoldError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _record_admin(principal, "evidence.legal_hold.release", target=sha256,
+                  details={"reason": reason})
+    return rec
 
 
 # ── OSCAL + auditor workspace (Wave 5) ────────────────────────────────────────
