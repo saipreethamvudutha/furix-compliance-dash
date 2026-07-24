@@ -445,6 +445,22 @@ def _evidence_sha(sha256: str) -> str:
     return sha
 
 
+def evidence_storage_posture() -> dict:
+    """Immutability/encryption posture of the evidence store — honest about
+    filesystem (content-addressed write-once) vs S3 Object Lock (true WORM)."""
+    import os  # noqa: PLC0415
+    s3_bucket = os.environ.get("FURIX_EVIDENCE_S3_BUCKET", "")
+    object_lock = bool(s3_bucket) and os.environ.get(
+        "FURIX_EVIDENCE_S3_OBJECT_LOCK", "").strip().lower() in ("1", "true", "yes")
+    return {
+        "backend": "s3" if s3_bucket else "filesystem",
+        "immutability": "content-addressed write-once",
+        "object_lock": object_lock,          # S3 Object Lock = hardware-enforced WORM
+        "worm": object_lock,
+        "encrypted_at_rest": bool(os.environ.get("FURIX_EVIDENCE_MASTER_KEY", "")),
+    }
+
+
 def get_evidence(store: ReportStore, sha256: str, *, now=None) -> dict:
     """Resolve a retained evidence object by its content address (FUR-CMP-007/008).
 
@@ -485,6 +501,7 @@ def get_evidence(store: ReportStore, sha256: str, *, now=None) -> dict:
         "raw": raw_bytes.decode("utf-8", errors="replace"),
         "envelope": envelope,
         "retention": retention,
+        "storage": evidence_storage_posture(),
     }
 
 

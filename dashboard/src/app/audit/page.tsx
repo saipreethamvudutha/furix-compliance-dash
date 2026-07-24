@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Loader2, RefreshCw, FileCheck2, Lock, LockOpen, Download, Plus } from "lucide-react";
 import { DataModeBadge, type DataMode } from "@/components/compliance/data-mode-badge";
+import { EvidenceLink } from "@/components/compliance/evidence-modal";
 import { apiHealthy } from "@/lib/data/client";
 import {
   addEvidenceRequest,
@@ -224,7 +225,16 @@ export default function AuditPage() {
 
             {p.signoffs.length > 0 && (
               <p className="mt-2 font-mono text-[11px] text-slate-400">
-                signed snapshot sha256: {p.signoffs[p.signoffs.length - 1].snapshot_sha256.slice(0, 32)}…
+                signed snapshot sha256:{" "}
+                <EvidenceLink
+                  uri={
+                    p.signoffs[p.signoffs.length - 1].snapshot_uri ||
+                    p.signoffs[p.signoffs.length - 1].snapshot_sha256
+                  }
+                  className="text-emerald-600 hover:underline dark:text-emerald-400"
+                >
+                  {p.signoffs[p.signoffs.length - 1].snapshot_sha256.slice(0, 32)}…
+                </EvidenceLink>
               </p>
             )}
 

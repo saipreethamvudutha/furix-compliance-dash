@@ -1029,6 +1029,12 @@ def release_legal_hold(sha256: str,
     return rec
 
 
+@app.get("/api/evidence-posture")
+def evidence_posture(principal: Principal = Depends(require(SCOPE_READ, "evidence_posture"))):
+    """Immutability/encryption posture of the evidence store (WORM indicator)."""
+    return service.evidence_storage_posture()
+
+
 # ── OSCAL + auditor workspace (Wave 5) ────────────────────────────────────────
 @app.get("/api/oscal")
 def oscal(principal: Principal = Depends(require(SCOPE_EXPORT, "oscal")),

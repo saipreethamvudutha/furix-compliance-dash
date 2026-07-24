@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Loader2, ArrowLeft, Save, GitBranch, ShieldCheck } from "lucide-react";
+import { EvidenceLink } from "@/components/compliance/evidence-modal";
 import {
   getControlWorkspace,
   updateControlProfile,
@@ -355,8 +356,13 @@ export default function ControlDetailPage() {
               </div>
               <div>
                 <dt className="text-slate-400">snapshot evidence</dt>
-                <dd className="truncate text-slate-700 dark:text-slate-200">
-                  {lin.posture_run.snapshot_sha256.slice(0, 24)}…
+                <dd className="truncate">
+                  <EvidenceLink
+                    uri={lin.posture_run.snapshot_uri || lin.posture_run.snapshot_sha256}
+                    className="text-emerald-600 hover:underline dark:text-emerald-400"
+                  >
+                    {lin.posture_run.snapshot_sha256.slice(0, 24)}…
+                  </EvidenceLink>
                 </dd>
               </div>
             </>

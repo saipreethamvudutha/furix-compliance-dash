@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Sparkles, Crosshair, Link as LinkIcon, Terminal, ClipboardCheck } from "lucide-react";
+import { ChevronDown, ChevronRight, Sparkles, Crosshair, Terminal, ClipboardCheck } from "lucide-react";
 import type { ComplianceControl, ComplianceFramework } from "@/lib/data/types";
 import { StatusPill } from "./status";
-import { EvidenceModal } from "./evidence-modal";
+import { EvidenceLink } from "./evidence-modal";
 
 const ATTACK_DOT: Record<string, string> = {
   critical: "bg-rose-500",
@@ -15,7 +15,6 @@ const ATTACK_DOT: Record<string, string> = {
 
 function ControlRow({ control }: { control: ComplianceControl }) {
   const [open, setOpen] = useState(false);
-  const [evidenceUri, setEvidenceUri] = useState<string | null>(null);
   const attack = control.attack ?? [];
   const expandable =
     control.systems.length > 0 || Boolean(control.aiRecommendation) || attack.length > 0;
@@ -106,15 +105,9 @@ function ControlRow({ control }: { control: ComplianceControl }) {
                       <span className="break-all">{s.detail}</span>
                     </div>
                     {s.evidenceUri && (
-                      <button
-                        type="button"
-                        onClick={() => setEvidenceUri(s.evidenceUri!)}
-                        className="mt-1 flex items-center gap-1.5 font-mono text-[10px] text-emerald-600 hover:underline dark:text-emerald-400"
-                        title="View the sealed original event (integrity-verified)"
-                      >
-                        <LinkIcon className="h-3 w-3 shrink-0" />
-                        <span className="break-all">{s.evidenceUri}</span>
-                      </button>
+                      <div className="mt-1">
+                        <EvidenceLink uri={s.evidenceUri} />
+                      </div>
                     )}
                     {s.reproduce && (
                       <div className="mt-1 flex items-center gap-1.5 rounded bg-slate-100 px-1.5 py-1 font-mono text-[10px] text-slate-500 dark:bg-slate-800 dark:text-slate-400">
@@ -135,11 +128,6 @@ function ControlRow({ control }: { control: ComplianceControl }) {
           )}
         </div>
       )}
-      <EvidenceModal
-        uri={evidenceUri}
-        open={Boolean(evidenceUri)}
-        onClose={() => setEvidenceUri(null)}
-      />
     </div>
   );
 }

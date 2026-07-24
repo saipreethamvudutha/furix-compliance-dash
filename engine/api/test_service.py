@@ -313,6 +313,20 @@ def test_legal_hold_validation():
         pass
 
 
+def test_evidence_storage_posture():
+    """FUR-CMP-008: get_evidence reports the store immutability posture; the
+    default (no S3 configured) is honest — filesystem, write-once, not WORM."""
+    from compliance_reporting.evidence import EvidenceStore
+    store = _store()
+    obj = EvidenceStore(store.root).put("evt", source="syslog", tenant="default")
+    sp = service.get_evidence(store, obj.sha256)["storage"]
+    assert sp["backend"] == "filesystem"
+    assert sp["worm"] is False and sp["object_lock"] is False
+    assert sp["immutability"] == "content-addressed write-once"
+    assert "encrypted_at_rest" in sp
+    assert service.evidence_storage_posture()["backend"] == "filesystem"
+
+
 if __name__ == "__main__":
     import sys, traceback
     tests = [(n, f) for n, f in sorted(globals().items())

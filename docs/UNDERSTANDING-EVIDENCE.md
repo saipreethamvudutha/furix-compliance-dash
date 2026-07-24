@@ -136,7 +136,9 @@ Content-addressed, write-once, on the persistent Docker volume:
 
 Write-once means re-ingesting the same event is a no-op — it never overwrites.
 The backend is filesystem today and **S3-Object-Lock-ready** for true WORM
-(write-once-read-many) immutability in production.
+(write-once-read-many) immutability in production. The evidence viewer footer
+shows the live posture — **write-once · filesystem** (dev) or **WORM · S3 Object
+Lock** (production) — plus an *encrypted at rest* badge when a master key is set.
 
 You can see your own stored evidence on the server:
 

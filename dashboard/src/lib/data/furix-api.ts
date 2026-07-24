@@ -455,6 +455,14 @@ export type RetentionPosture = {
   legal_hold: LegalHold | null;
 };
 
+export type StoragePosture = {
+  backend: string; // "filesystem" | "s3"
+  immutability: string; // e.g. "content-addressed write-once"
+  object_lock: boolean; // S3 Object Lock = hardware-enforced WORM
+  worm: boolean;
+  encrypted_at_rest: boolean;
+};
+
 export type EvidenceObject = {
   sha256: string;
   raw_uri: string;
@@ -464,6 +472,7 @@ export type EvidenceObject = {
   raw: string;
   envelope: EvidenceEnvelope;
   retention: RetentionPosture;
+  storage: StoragePosture;
 };
 
 /** Extract the sha256 from a furix-evidence://<sha> URI (or accept a raw sha). */

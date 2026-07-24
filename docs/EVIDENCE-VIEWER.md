@@ -72,6 +72,19 @@ a viewer, and an access-audit trail.
 - Impl: `engine/compliance_reporting/retention.py`,
   `engine/compliance_reporting/legal_hold.py`, service + endpoints, and the modal.
 
+### Evidence everywhere + WORM posture indicator
+- `furix-evidence://` references are clickable via a reusable **`EvidenceLink`**
+  component — now on the Compliance control table AND the **control-detail** page,
+  the **connectors** page (posture-run snapshot), and the **audit** page (sign-off
+  snapshot). Report *integrity* hashes are intentionally left non-clickable — they
+  are report digests, not retrievable evidence objects.
+- The viewer footer shows the store's immutability posture: **write-once ·
+  filesystem** (dev) or **WORM · S3 Object Lock** (production), plus an "encrypted
+  at rest" badge when a master key is configured. Endpoint
+  `GET /api/evidence-posture` (also embedded in `GET /api/evidence`). Honest by
+  design — it reflects the actual backend, not a marketing claim.
+- Impl: `EvidenceLink` in `evidence-modal.tsx`, `service.evidence_storage_posture`.
+
 ## RBAC — all roles now tested end-to-end
 
 The role→scope model was only ever exercised for `admin`. Added an HTTP-level
@@ -110,8 +123,9 @@ Anonymous evidence access is `401`; every authorized access is audited.
 
 ## Verification (all local, pre-push)
 
-- Engine: `python -m api.test_service` (17/17, incl. retention + legal-hold),
-  `python -m api.test_auth` (21/21, incl. the all-roles matrix + legal-hold RBAC).
+- Engine: `python -m api.test_service` (18/18, incl. retention, legal-hold, and
+  storage posture), `python -m api.test_auth` (21/21, incl. the all-roles matrix +
+  legal-hold RBAC).
 - Dashboard: `npm test` (45/45 BFF tests, incl. the issuer regression + evidence
   & legal-hold RBAC), `npm run build` (clean `tsc` + `next build`).
 - File-upload CSRF fix verified live on the server (upload succeeds end-to-end).
@@ -127,7 +141,9 @@ Anonymous evidence access is `401`; every authorized access is audited.
 
 ## Not yet built (future increments)
 
-- WORM posture indicator (filesystem vs S3 Object Lock) surfaced in the viewer.
 - Retention **expiry enforcement / purge job** (today retention is computed and
   displayed, and legal hold blocks expiry — but nothing is auto-deleted yet).
-- Evidence viewer wired into the control-detail page and posture-run lineage.
+- Evidence-access audit view (surface the `evidence.access` log in the admin UI).
+- OSCAL / audit-package enrichment (embed evidence + integrity into the binder).
+- Actually wiring the S3 Object Lock backend (the posture indicator is honest
+  today: filesystem write-once until `FURIX_EVIDENCE_S3_BUCKET` is configured).

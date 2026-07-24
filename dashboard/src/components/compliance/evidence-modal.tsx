@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   ShieldCheck, ShieldAlert, Loader2, FileText, Lock, Clock, GitBranch, Hash, Scale,
+  Link as LinkIcon,
 } from "lucide-react";
 import {
   getEvidence, evidenceSha, placeLegalHold, releaseLegalHold, type EvidenceObject,
@@ -264,8 +265,28 @@ export function EvidenceModal({
                 </div>
               </div>
 
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 font-mono text-[10px] text-slate-500 dark:border-slate-700 dark:bg-slate-900">
-                Content-addressed · write-once · this view was recorded in the admin audit log.
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 font-mono text-[10px] text-slate-500 dark:border-slate-700 dark:bg-slate-900">
+                <span
+                  className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium ${
+                    data.storage.worm
+                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                      : "bg-slate-500/10 text-slate-500"
+                  }`}
+                  title={
+                    data.storage.worm
+                      ? "S3 Object Lock — hardware-enforced write-once-read-many"
+                      : "Content-addressed, no-overwrite filesystem store"
+                  }
+                >
+                  <Lock className="h-3 w-3" />
+                  {data.storage.worm ? "WORM · S3 Object Lock" : `write-once · ${data.storage.backend}`}
+                </span>
+                {data.storage.encrypted_at_rest && (
+                  <span className="inline-flex items-center gap-1 rounded bg-slate-500/10 px-1.5 py-0.5">
+                    <Lock className="h-3 w-3" /> encrypted at rest
+                  </span>
+                )}
+                <span>· access recorded in the admin audit log</span>
               </div>
             </>
           )}
@@ -284,5 +305,43 @@ function Meta({ icon, label, value }: { icon: ReactNode; label: string; value: s
       </div>
       <div className="mt-0.5 break-all font-medium text-slate-700 dark:text-slate-200">{value}</div>
     </div>
+  );
+}
+
+/**
+ * A clickable furix-evidence:// reference that opens the evidence viewer. Drop it
+ * anywhere a content address appears — it manages its own modal state. Accepts a
+ * full `furix-evidence://<sha>` URI or a bare sha (getEvidence normalises both).
+ */
+export function EvidenceLink({
+  uri,
+  className,
+  children,
+}: {
+  uri: string;
+  className?: string;
+  children?: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={
+          className ??
+          "inline-flex items-center gap-1 font-mono text-[10px] text-emerald-600 hover:underline dark:text-emerald-400"
+        }
+        title="View the sealed original event (integrity-verified)"
+      >
+        {children ?? (
+          <>
+            <LinkIcon className="h-3 w-3 shrink-0" />
+            <span className="break-all">{uri}</span>
+          </>
+        )}
+      </button>
+      <EvidenceModal uri={open ? uri : null} open={open} onClose={() => setOpen(false)} />
+    </>
   );
 }

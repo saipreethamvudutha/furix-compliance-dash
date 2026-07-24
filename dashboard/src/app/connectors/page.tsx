@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Loader2, RefreshCw, Plug, Play, ShieldCheck, ShieldAlert, CircleHelp, GitBranch } from "lucide-react";
 import { DataModeBadge, type DataMode } from "@/components/compliance/data-mode-badge";
+import { EvidenceLink } from "@/components/compliance/evidence-modal";
 import { apiHealthy } from "@/lib/data/client";
 import {
   getConnectors,
@@ -291,8 +292,13 @@ export default function ConnectorsPage() {
                         </div>
                         <div>
                           <dt className="text-slate-400">snapshot evidence</dt>
-                          <dd className="truncate text-slate-700 dark:text-slate-200">
-                            {r.evidence.snapshot_sha256.slice(0, 16)}…
+                          <dd className="truncate">
+                            <EvidenceLink
+                              uri={r.evidence.raw_uri || r.evidence.snapshot_sha256}
+                              className="text-emerald-600 hover:underline dark:text-emerald-400"
+                            >
+                              {r.evidence.snapshot_sha256.slice(0, 16)}…
+                            </EvidenceLink>
                           </dd>
                         </div>
                         <div>
