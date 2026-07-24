@@ -359,7 +359,7 @@ export default function ControlDetailPage() {
                 <dd className="truncate">
                   <EvidenceLink
                     uri={lin.posture_run.snapshot_uri || lin.posture_run.snapshot_sha256}
-                    className="text-emerald-600 hover:underline dark:text-emerald-400"
+                    className="text-emerald-500 hover:underline"
                   >
                     {lin.posture_run.snapshot_sha256.slice(0, 24)}…
                   </EvidenceLink>

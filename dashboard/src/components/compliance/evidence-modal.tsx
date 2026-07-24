@@ -2,8 +2,14 @@
 
 // Evidence viewer (FUR-CMP-007/008). Resolves a furix-evidence://<sha> URI through
 // the BFF to its sealed original event + provenance envelope, shows a live
-// integrity verdict, and the retention posture (retain-until / legal hold). Every
-// open is recorded server-side in the admin audit log.
+// integrity verdict, the retention posture (retain-until / legal hold) and the
+// store's immutability posture. Every open is recorded in the admin audit log.
+//
+// Styling note: this app themes via [data-theme] + CSS variables, and Tailwind's
+// `dark:` variant is bound to `.dark` (globals.css) which is never set — so
+// `dark:` overrides do NOT apply here. Surfaces/text therefore use the themed CSS
+// variables (correct in both light and dark), and semantic accents use mid-tone
+// (-500) colours with translucent fills, which read on either background.
 
 import { useEffect, useState, type ReactNode } from "react";
 import {
@@ -21,6 +27,11 @@ import {
   getEvidence, evidenceSha, placeLegalHold, releaseLegalHold, type EvidenceObject,
 } from "@/lib/data/furix-api";
 
+const INSET = {
+  background: "linear-gradient(180deg, var(--inset-bg-top), var(--inset-bg-bot))",
+  border: "1px solid var(--inset-border)",
+};
+
 function prettyRaw(raw: string): string {
   const t = raw.trim();
   if ((t.startsWith("{") && t.endsWith("}")) || (t.startsWith("[") && t.endsWith("]"))) {
@@ -31,6 +42,17 @@ function prettyRaw(raw: string): string {
     }
   }
   return raw;
+}
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <div
+      className="mb-1 text-[11px] font-semibold uppercase tracking-wide"
+      style={{ color: "var(--section-heading)" }}
+    >
+      {children}
+    </div>
+  );
 }
 
 export function EvidenceModal({
@@ -107,24 +129,30 @@ export function EvidenceModal({
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5 text-[var(--furix-accent,#c2703d)]" />
+          <DialogTitle className="flex items-center gap-2" style={{ color: "var(--panel-text)" }}>
+            <FileText className="h-5 w-5" style={{ color: "var(--section-heading)" }} />
             Evidence
           </DialogTitle>
-          <DialogDescription className="break-all font-mono text-[11px]">
+          <DialogDescription
+            className="break-all font-mono text-[11px]"
+            style={{ color: "var(--panel-text-muted)" }}
+          >
             furix-evidence://{sha}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="max-h-[65vh] space-y-4 overflow-y-auto pr-2">
+        <div
+          className="max-h-[65vh] space-y-4 overflow-y-auto pr-2"
+          style={{ color: "var(--panel-text)" }}
+        >
           {loading && (
-            <div className="flex items-center gap-2 text-sm text-slate-500">
+            <div className="flex items-center gap-2 text-sm" style={{ color: "var(--panel-text-muted)" }}>
               <Loader2 className="h-4 w-4 animate-spin" /> Retrieving sealed evidence…
             </div>
           )}
 
           {error && (
-            <div className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-700 dark:text-rose-300">
+            <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-500">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
               <div>
                 <div className="font-medium">Something went wrong</div>
@@ -135,11 +163,12 @@ export function EvidenceModal({
 
           {data && env && ret && (
             <>
+              {/* integrity verdict */}
               <div
                 className={`flex items-center gap-2 rounded-lg border p-3 text-sm ${
                   data.integrity_verified
-                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                    : "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-500"
+                    : "border-rose-500/40 bg-rose-500/10 text-rose-500"
                 }`}
               >
                 {data.integrity_verified ? (
@@ -151,7 +180,7 @@ export function EvidenceModal({
                   <div className="font-medium">
                     {data.integrity_verified ? "Integrity verified" : "Integrity check FAILED"}
                   </div>
-                  <div className="text-xs opacity-80">
+                  <div className="text-xs opacity-90">
                     {data.integrity_verified
                       ? "The stored bytes re-hash to this exact SHA-256 — untampered."
                       : "The stored bytes do not match the address — possible tampering."}
@@ -161,17 +190,20 @@ export function EvidenceModal({
 
               {/* retention & legal hold */}
               <div>
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                  Retention &amp; legal hold
-                </div>
+                <SectionLabel>Retention &amp; legal hold</SectionLabel>
                 <div
                   className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
                     ret.on_legal_hold
-                      ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-500"
                       : ret.expired
-                        ? "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
-                        : "border-slate-200 dark:border-slate-700"
+                        ? "border-rose-500/40 bg-rose-500/10 text-rose-500"
+                        : ""
                   }`}
+                  style={
+                    ret.on_legal_hold || ret.expired
+                      ? undefined
+                      : { border: "1px solid var(--divider)", color: "var(--panel-text)" }
+                  }
                 >
                   {ret.on_legal_hold ? (
                     <Scale className="mt-0.5 h-4 w-4 shrink-0" />
@@ -183,10 +215,10 @@ export function EvidenceModal({
                       <>
                         <div className="font-medium">On legal hold — retention frozen</div>
                         {ret.legal_hold?.reason && (
-                          <div className="text-xs opacity-80">Reason: {ret.legal_hold.reason}</div>
+                          <div className="text-xs opacity-90">Reason: {ret.legal_hold.reason}</div>
                         )}
                         {ret.legal_hold?.placed_by && (
-                          <div className="text-xs opacity-70">
+                          <div className="text-xs opacity-75">
                             by {ret.legal_hold.placed_by} · {ret.legal_hold.placed_at?.slice(0, 10)}
                           </div>
                         )}
@@ -196,9 +228,9 @@ export function EvidenceModal({
                         <div className="font-medium">
                           {ret.expired ? "Retention expired" : "Retained"} until{" "}
                           {ret.retain_until.slice(0, 10)}
-                          <span className="ml-1 font-normal uppercase opacity-70">({ret.class})</span>
+                          <span className="ml-1 font-normal uppercase opacity-75">({ret.class})</span>
                         </div>
-                        <div className="text-xs opacity-80">
+                        <div className="text-xs" style={ret.expired ? undefined : { color: "var(--panel-text-muted)" }}>
                           {ret.expired
                             ? "Past the mandated retention window."
                             : `${ret.days_remaining?.toLocaleString()} days remaining · ${Math.round(
@@ -207,7 +239,7 @@ export function EvidenceModal({
                         </div>
                       </>
                     ) : (
-                      <div className="text-xs opacity-80">
+                      <div className="text-xs" style={{ color: "var(--panel-text-muted)" }}>
                         No collection time on record — retention window not computed.
                       </div>
                     )}
@@ -218,7 +250,7 @@ export function EvidenceModal({
                           type="button"
                           disabled={actionBusy}
                           onClick={doPlace}
-                          className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-300"
+                          className="inline-flex items-center gap-1 rounded-md border border-amber-500/50 px-2 py-1 text-xs font-medium text-amber-500 hover:bg-amber-500/10 disabled:opacity-50"
                         >
                           {actionBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Lock className="h-3 w-3" />}
                           Place legal hold
@@ -229,7 +261,8 @@ export function EvidenceModal({
                           type="button"
                           disabled={actionBusy}
                           onClick={doRelease}
-                          className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800"
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-50"
+                          style={{ border: "1px solid var(--divider)", color: "var(--panel-text)" }}
                         >
                           {actionBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                           Release hold
@@ -240,19 +273,20 @@ export function EvidenceModal({
                 </div>
               </div>
 
+              {/* original event */}
               <div>
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                  Original event
-                </div>
-                <pre className="max-h-64 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono text-xs dark:border-slate-700 dark:bg-slate-900">
+                <SectionLabel>Original event</SectionLabel>
+                <pre
+                  className="max-h-64 overflow-auto rounded-lg p-3 font-mono text-xs"
+                  style={{ ...INSET, color: "var(--panel-text)" }}
+                >
                   {prettyRaw(data.raw)}
                 </pre>
               </div>
 
+              {/* provenance */}
               <div>
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                  Provenance
-                </div>
+                <SectionLabel>Provenance</SectionLabel>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <Meta icon={<FileText className="h-3.5 w-3.5" />} label="Source" value={env.source} />
                   <Meta icon={<Hash className="h-3.5 w-3.5" />} label="Size" value={`${data.size_bytes} bytes`} />
@@ -265,13 +299,20 @@ export function EvidenceModal({
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 font-mono text-[10px] text-slate-500 dark:border-slate-700 dark:bg-slate-900">
+              {/* storage posture */}
+              <div
+                className="flex flex-wrap items-center gap-2 rounded-lg p-2 font-mono text-[10px]"
+                style={{ ...INSET, color: "var(--panel-text-muted)" }}
+              >
                 <span
                   className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium ${
-                    data.storage.worm
-                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                      : "bg-slate-500/10 text-slate-500"
+                    data.storage.worm ? "bg-emerald-500/15 text-emerald-500" : ""
                   }`}
+                  style={
+                    data.storage.worm
+                      ? undefined
+                      : { background: "rgba(127,127,127,0.18)", color: "var(--panel-text)" }
+                  }
                   title={
                     data.storage.worm
                       ? "S3 Object Lock — hardware-enforced write-once-read-many"
@@ -282,7 +323,10 @@ export function EvidenceModal({
                   {data.storage.worm ? "WORM · S3 Object Lock" : `write-once · ${data.storage.backend}`}
                 </span>
                 {data.storage.encrypted_at_rest && (
-                  <span className="inline-flex items-center gap-1 rounded bg-slate-500/10 px-1.5 py-0.5">
+                  <span
+                    className="inline-flex items-center gap-1 rounded px-1.5 py-0.5"
+                    style={{ background: "rgba(127,127,127,0.18)", color: "var(--panel-text)" }}
+                  >
                     <Lock className="h-3 w-3" /> encrypted at rest
                   </span>
                 )}
@@ -298,12 +342,14 @@ export function EvidenceModal({
 
 function Meta({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
   return (
-    <div className="rounded-md border border-slate-200 p-2 dark:border-slate-700">
-      <div className="flex items-center gap-1.5 text-slate-400">
+    <div className="rounded-md p-2" style={{ border: "1px solid var(--divider)" }}>
+      <div className="flex items-center gap-1.5" style={{ color: "var(--panel-text-muted)" }}>
         {icon}
         <span>{label}</span>
       </div>
-      <div className="mt-0.5 break-all font-medium text-slate-700 dark:text-slate-200">{value}</div>
+      <div className="mt-0.5 break-all font-medium" style={{ color: "var(--panel-text)" }}>
+        {value}
+      </div>
     </div>
   );
 }
@@ -330,7 +376,7 @@ export function EvidenceLink({
         onClick={() => setOpen(true)}
         className={
           className ??
-          "inline-flex items-center gap-1 font-mono text-[10px] text-emerald-600 hover:underline dark:text-emerald-400"
+          "inline-flex items-center gap-1 font-mono text-[10px] text-emerald-500 hover:underline"
         }
         title="View the sealed original event (integrity-verified)"
       >

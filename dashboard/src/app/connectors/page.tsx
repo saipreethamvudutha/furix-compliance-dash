@@ -295,7 +295,7 @@ export default function ConnectorsPage() {
                           <dd className="truncate">
                             <EvidenceLink
                               uri={r.evidence.raw_uri || r.evidence.snapshot_sha256}
-                              className="text-emerald-600 hover:underline dark:text-emerald-400"
+                              className="text-emerald-500 hover:underline"
                             >
                               {r.evidence.snapshot_sha256.slice(0, 16)}…
                             </EvidenceLink>

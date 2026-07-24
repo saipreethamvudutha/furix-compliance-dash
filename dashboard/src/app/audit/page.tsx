@@ -231,7 +231,7 @@ export default function AuditPage() {
                     p.signoffs[p.signoffs.length - 1].snapshot_uri ||
                     p.signoffs[p.signoffs.length - 1].snapshot_sha256
                   }
-                  className="text-emerald-600 hover:underline dark:text-emerald-400"
+                  className="text-emerald-500 hover:underline"
                 >
                   {p.signoffs[p.signoffs.length - 1].snapshot_sha256.slice(0, 32)}…
                 </EvidenceLink>
