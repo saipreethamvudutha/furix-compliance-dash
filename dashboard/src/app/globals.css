@@ -1,7 +1,13 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
+/* This app themes with `data-theme` on <html> (ThemeToggle), and DARK is the
+   default — it never sets a `.dark` class. Binding the variant to `.dark` made
+   every `dark:` utility in the app dead code, so components rendered their LIGHT
+   styles (white panels, white hover) on the dark theme. Match the real theme
+   attribute, and also the pre-mount state (no attribute yet = dark default) so
+   there is no light flash before ThemeToggle hydrates. */
+@custom-variant dark (&:is([data-theme="dark"] *, html:not([data-theme]) *));
 
 /* Vendored local font stack (no Google Fonts build-time fetch). Inter-like
    system UI faces; --font-sans below resolves to this. */
