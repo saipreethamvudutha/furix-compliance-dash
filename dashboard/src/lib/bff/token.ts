@@ -64,7 +64,7 @@ export function bffAllows(role: string, method: string, apiPath: string): boolea
     return ["admin", "auditor"].includes(role);
   }
   // export-only surfaces require the auditor's export scope OR admin
-  if (p.startsWith("oscal") || p.startsWith("audit/")) {
+  if (p.startsWith("oscal") || p.startsWith("audit/") || p.startsWith("evidence-access")) {
     return ["admin", "auditor"].includes(role);
   }
   if (isWrite) {

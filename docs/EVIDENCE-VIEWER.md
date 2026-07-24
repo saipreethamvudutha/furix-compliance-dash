@@ -85,6 +85,14 @@ a viewer, and an access-audit trail.
   design — it reflects the actual backend, not a marketing claim.
 - Impl: `EvidenceLink` in `evidence-modal.tsx`, `service.evidence_storage_posture`.
 
+### Evidence-access audit view
+- Every evidence view and legal-hold place/release already writes to the
+  tamper-evident admin audit log; the new **Evidence Log** page (auditor/admin, in
+  the sidebar) surfaces that `evidence.*` trail read-only — who viewed or held
+  which evidence, when, with the integrity result and a clickable link back to the
+  object. Endpoint `GET /api/evidence-access-log` (export scope; gated in bffAllows).
+- Impl: `service.list_evidence_access`, `app/evidence-access/page.tsx`.
+
 ## RBAC — all roles now tested end-to-end
 
 The role→scope model was only ever exercised for `admin`. Added an HTTP-level
@@ -123,11 +131,11 @@ Anonymous evidence access is `401`; every authorized access is audited.
 
 ## Verification (all local, pre-push)
 
-- Engine: `python -m api.test_service` (18/18, incl. retention, legal-hold, and
-  storage posture), `python -m api.test_auth` (21/21, incl. the all-roles matrix +
-  legal-hold RBAC).
-- Dashboard: `npm test` (45/45 BFF tests, incl. the issuer regression + evidence
-  & legal-hold RBAC), `npm run build` (clean `tsc` + `next build`).
+- Engine: `python -m api.test_service` (19/19, incl. retention, legal-hold,
+  storage posture, and the evidence-access filter), `python -m api.test_auth`
+  (21/21, incl. the all-roles matrix + legal-hold + evidence-access RBAC).
+- Dashboard: `npm test` (46/46 BFF tests), `npm run build` (clean `tsc` +
+  `next build`).
 - File-upload CSRF fix verified live on the server (upload succeeds end-to-end).
 
 ## Demo script (for a client)
@@ -143,7 +151,6 @@ Anonymous evidence access is `401`; every authorized access is audited.
 
 - Retention **expiry enforcement / purge job** (today retention is computed and
   displayed, and legal hold blocks expiry — but nothing is auto-deleted yet).
-- Evidence-access audit view (surface the `evidence.access` log in the admin UI).
 - OSCAL / audit-package enrichment (embed evidence + integrity into the binder).
 - Actually wiring the S3 Object Lock backend (the posture indicator is honest
   today: filesystem write-once until `FURIX_EVIDENCE_S3_BUCKET` is configured).

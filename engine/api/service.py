@@ -528,6 +528,16 @@ def list_legal_holds(store: ReportStore, *, active_only: bool = True) -> list:
     return LegalHoldStore(store.root).list(active_only=active_only)
 
 
+def list_evidence_access(store: ReportStore, tenant: str, *, limit: int = 200) -> list:
+    """Evidence-related entries from the administrative audit log (newest first):
+    `evidence.access` views + legal-hold place/release. The auditor-facing
+    'who touched which evidence, when' trail."""
+    from compliance_reporting.admin_audit import AdminAuditLog  # noqa: PLC0415
+    entries = AdminAuditLog(store.root).list(tenant, limit=max(limit * 5, 1000))
+    ev = [e for e in entries if str(e.get("action", "")).startswith("evidence.")]
+    return ev[:limit]
+
+
 def _verify_evidence_ref(store: ReportStore, ref: str) -> bool:
     """An evidence reference must be a furix-evidence://<sha256> that actually
     resolves to a retained, verifiable object — no arbitrary/dangling refs."""

@@ -161,6 +161,15 @@ test("evidence retrieval is a read — allowed for every authenticated role", ()
   }
 });
 
+test("evidence-access log is export-scoped (auditor/admin only)", () => {
+  const p = "api/evidence-access-log";
+  assert.equal(bffAllows("admin", "GET", p), true);
+  assert.equal(bffAllows("auditor", "GET", p), true);
+  assert.equal(bffAllows("analyst", "GET", p), false);
+  assert.equal(bffAllows("mssp", "GET", p), false);
+  assert.equal(bffAllows("readonly", "GET", p), false);
+});
+
 test("legal hold: place is auditor/admin, release is admin-only", () => {
   const p = `api/evidence/${"b".repeat(64)}/legal-hold`;
   assert.equal(bffAllows("auditor", "POST", p), true);

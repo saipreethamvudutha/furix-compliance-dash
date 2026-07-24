@@ -154,6 +154,8 @@ docker compose exec api sh -c 'find /data -path "*evidence/objects*" | head'
 Opening evidence is not silent. Every retrieval writes an `evidence.access` entry
 to the tenant's administrative audit log (who viewed which hash, when, and the
 integrity result). Auditors require exactly this: a record of who looked at what.
+The dashboard surfaces it at **Evidence Log** (auditor/admin) — a read-only table
+of who viewed or held which evidence, when, each row linking back to the object.
 
 ---
 

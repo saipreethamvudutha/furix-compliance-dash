@@ -286,6 +286,14 @@ def test_endpoint_rbac_matrix_all_roles():
         else:
             assert denied(st), f"{role} should be denied the admin audit-log (got {st})"
 
+    # EVIDENCE-ACCESS LOG (export scope): admin / auditor allowed; others denied
+    for role in keys:
+        st = client.get("/api/evidence-access-log", headers=h(role)).status_code
+        if role in ("admin", "auditor"):
+            assert not denied(st), f"{role} should read the evidence-access log (got {st})"
+        else:
+            assert denied(st), f"{role} should be denied the evidence-access log (got {st})"
+
     # evidence retrieval is closed to anonymous
     assert client.get(f"/api/evidence/{obj.sha256}").status_code == 401
     # and every evidence access is written to the admin audit log

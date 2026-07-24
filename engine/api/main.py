@@ -1035,6 +1035,16 @@ def evidence_posture(principal: Principal = Depends(require(SCOPE_READ, "evidenc
     return service.evidence_storage_posture()
 
 
+@app.get("/api/evidence-access-log")
+def evidence_access_log(principal: Principal = Depends(require(SCOPE_EXPORT, "evidence_access_log")),
+                        tenant: str | None = None, limit: int = 200):
+    """Auditor-facing view of the evidence-access trail — who viewed or held which
+    evidence, and when. The export scope (auditor/admin)."""
+    tn = tenant or principal.tenant_id
+    store = _store_for(principal, tenant)  # enforce cross-tenant rules
+    return service.list_evidence_access(store, tn, limit=limit)
+
+
 # ── OSCAL + auditor workspace (Wave 5) ────────────────────────────────────────
 @app.get("/api/oscal")
 def oscal(principal: Principal = Depends(require(SCOPE_EXPORT, "oscal")),

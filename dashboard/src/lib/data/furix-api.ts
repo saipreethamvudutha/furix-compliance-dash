@@ -500,3 +500,20 @@ export function releaseLegalHold(uriOrSha: string, reason = ""): Promise<LegalHo
     `/api/evidence/${encodeURIComponent(evidenceSha(uriOrSha))}/legal-hold?reason=${encodeURIComponent(reason)}`,
   );
 }
+
+// ── evidence-access audit trail (who viewed / held which evidence, when) ──────
+export type EvidenceAccessEntry = {
+  seq: number;
+  actor: string;
+  /** evidence.access | evidence.legal_hold.place | evidence.legal_hold.release */
+  action: string;
+  target: string; // the evidence sha256
+  outcome: string;
+  at: string;
+  details: Record<string, unknown>;
+};
+
+/** The evidence-access trail (auditor/admin). Newest first. */
+export function getEvidenceAccessLog(limit = 200): Promise<EvidenceAccessEntry[]> {
+  return apiGet<EvidenceAccessEntry[]>(`/api/evidence-access-log?limit=${limit}`);
+}

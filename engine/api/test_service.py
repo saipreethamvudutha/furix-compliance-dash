@@ -327,6 +327,22 @@ def test_evidence_storage_posture():
     assert service.evidence_storage_posture()["backend"] == "filesystem"
 
 
+def test_list_evidence_access_filters_admin_log():
+    """Only evidence.* admin-audit entries surface in the access view, newest first."""
+    from compliance_reporting.admin_audit import AdminAuditLog
+    store = _store()
+    log = AdminAuditLog(store.root)
+    log.append(tenant="t", actor="a", action="evidence.access", at="2026-07-01T00:00:00+00:00", target="sha1")
+    log.append(tenant="t", actor="a", action="connector.run", at="2026-07-01T00:00:01+00:00", target="c1")
+    log.append(tenant="t", actor="b", action="evidence.legal_hold.place", at="2026-07-01T00:00:02+00:00", target="sha2")
+    out = service.list_evidence_access(store, "t")
+    actions = [e["action"] for e in out]
+    assert "connector.run" not in actions
+    assert set(actions) == {"evidence.access", "evidence.legal_hold.place"}
+    assert out[0]["action"] == "evidence.legal_hold.place"   # newest first
+    assert out[0]["target"] == "sha2"
+
+
 if __name__ == "__main__":
     import sys, traceback
     tests = [(n, f) for n, f in sorted(globals().items())
